@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Связи — {{ project.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Проекты</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('requirements.list_requirements', project_id=project.id) }}">{{ project.name }}</a></li>
+        <li class="breadcrumb-item active">Связи трассировки</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-diagram-2"></i> Связи трассировки</h2>
+    <div class="btn-group btn-group-sm">
+        {% if current_user.can_manage_links() %}
+        <a href="{{ url_for('tracelinks.new_tracelink', project_id=project.id) }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg"></i> Создать связь
+        </a>
+        {% endif %}
+        {% if current_user.can_run_integrity_check() %}
+        <form method="POST" action="{{ url_for('tracelinks.integrity_check', project_id=project.id) }}" style="display:inline">
+            <button class="btn btn-warning btn-sm">
+                <i class="bi bi-shield-check"></i> Проверка целостности
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if links %}
+<div class="table-responsive">
+    <table class="table table-hover table-sm">
+        <thead class="table-light">
+            <tr>
+                <th>#</th>
+                <th>Исходное требование</th>
+                <th></th>
+                <th>Целевое требование</th>
+                <th>Тип связи</th>
+                <th>Описание</th>
+                <th>Статус</th>
+                <th>Создано</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for link in links %}
+            <tr class="{{ 'table-warning' if link.status == 'NEEDS_REVIEW' else '' }}">
+                <td>{{ link.id }}</td>
+                <td>
+                    <a href="{{ url_for('requirements.view_requirement', project_id=project.id, req_id=link.source_req_id) }}">
+                        {{ link.source_req.system_id }}
+                    </a>
+                    <small class="text-muted d-block">{{ link.source_req.title | truncate(25) }}</small>
+                </td>
+                <td><i class="bi bi-arrow-right"></i></td>
+                <td>
+                    <a href="{{ url_for('requirements.view_requirement', project_id=project.id, req_id=link.target_req_id) }}">
+                        {{ link.target_req.system_id }}
+                    </a>
+                    <small class="text-muted d-block">{{ link.target_req.title | truncate(25) }}</small>
+                </td>
+                <td><span class="badge bg-primary">{{ link.link_type }}</span></td>
+                <td>{{ link.description | truncate(30) if link.description else '—' }}</td>
+                <td>
+                    <span class="badge bg-{{ 'danger' if link.status == 'NEEDS_REVIEW' else 'success' }}">
+                        {{ link.status }}
+                    </span>
+                </td>
+                <td>{{ link.created_at.strftime('%d.%m.%Y') }}</td>
+                <td>
+                    {% if current_user.can_manage_links() %}
+                    <form method="POST" action="{{ url_for('tracelinks.delete_link', project_id=project.id, link_id=link.id) }}"
+                          style="display:inline" onsubmit="return confirm('Удалить связь?')">
+                        <button class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-diagram-2 display-1 text-muted"></i>
+    <p class="mt-3 text-muted">Связей пока нет</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Журнал аудита{% endblock %}
+{% block content %}
+<h2><i class="bi bi-journal-text"></i> Журнал аудита</h2>
+
+<form method="GET" class="row g-2 mb-3 align-items-end">
+    <div class="col-md-3">
+        <label class="form-label">Тип объекта</label>
+        <select name="object_type" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for t in ['requirement','trace_link','project','user','change_request','baseline','auth','notification'] %}
+            <option value="{{ t }}" {{ 'selected' if object_type_filter == t }}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-2">
+        <button type="submit" class="btn btn-sm btn-outline-primary">Фильтр</button>
+    </div>
+</form>
+
+{% if logs %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>Дата/время</th>
+                <th>Пользователь</th>
+                <th>Действие</th>
+                <th>Тип объекта</th>
+                <th>ID объекта</th>
+                <th>Было</th>
+                <th>Стало</th>
+                <th>Контекст</th>
+                <th>IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.created_at.strftime('%d.%m.%Y %H:%M:%S') }}</td>
+                <td>{{ log.user.username if log.user else '—' }}</td>
+                <td><span class="badge bg-secondary">{{ log.action }}</span></td>
+                <td>{{ log.object_type }}</td>
+                <td><code>{{ log.object_id or '—' }}</code></td>
+                <td>{{ log.old_value | truncate(30) if log.old_value else '—' }}</td>
+                <td>{{ log.new_value | truncate(30) if log.new_value else '—' }}</td>
+                <td>{{ log.context or '—' }}</td>
+                <td><small>{{ log.ip_address or '—' }}</small></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm justify-content-center">
+        {% if pagination.has_prev %}
+        <li class="page-item"><a class="page-link" href="?page={{ pagination.prev_num }}&object_type={{ object_type_filter }}">Назад</a></li>
+        {% endif %}
+        {% for p in pagination.iter_pages() %}
+            {% if p %}
+            <li class="page-item {{ 'active' if p == pagination.page }}">
+                <a class="page-link" href="?page={{ p }}&object_type={{ object_type_filter }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <li class="page-item"><a class="page-link" href="?page={{ pagination.next_num }}&object_type={{ object_type_filter }}">Далее</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="text-center py-5">
+    <p class="text-muted">Записей в журнале нет</p>
+</div>
+{% endif %}
+{% endblock %}

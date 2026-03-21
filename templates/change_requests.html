@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Запросы на изменение{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Проекты</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('requirements.list_requirements', project_id=project.id) }}">{{ project.name }}</a></li>
+        <li class="breadcrumb-item active">Запросы на изменение</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-pencil-square"></i> Запросы на изменение</h2>
+    <a href="{{ url_for('changes.new_change_request', project_id=project.id) }}" class="btn btn-primary btn-sm">
+        <i class="bi bi-plus-lg"></i> Новый запрос
+    </a>
+</div>
+
+{% if change_requests %}
+<div class="table-responsive">
+    <table class="table table-hover table-sm">
+        <thead class="table-light">
+            <tr>
+                <th>#</th>
+                <th>Требование</th>
+                <th>Обоснование</th>
+                <th>Статус</th>
+                <th>Автор</th>
+                <th>Назначено</th>
+                <th>Дата</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cr in change_requests %}
+            <tr>
+                <td>{{ cr.id }}</td>
+                <td>
+                    <a href="{{ url_for('requirements.view_requirement', project_id=project.id, req_id=cr.requirement_id) }}">
+                        {{ cr.requirement.system_id }}
+                    </a>
+                </td>
+                <td>{{ cr.justification | truncate(50) }}</td>
+                <td>
+                    <span class="badge bg-{{ 'success' if cr.status == 'approved' else 'danger' if cr.status == 'rejected' else 'warning' }}">
+                        {{ cr.status }}
+                    </span>
+                </td>
+                <td>{{ cr.requester.username }}</td>
+                <td>{{ cr.assignee.username if cr.assignee else '—' }}</td>
+                <td>{{ cr.created_at.strftime('%d.%m.%Y') }}</td>
+                <td>
+                    {% if cr.status == 'pending' and current_user.can_approve_changes() %}
+                    <form method="POST" action="{{ url_for('changes.approve_cr', project_id=project.id, cr_id=cr.id) }}" style="display:inline">
+                        <button class="btn btn-success btn-sm"><i class="bi bi-check"></i></button>
+                    </form>
+                    <form method="POST" action="{{ url_for('changes.reject_cr', project_id=project.id, cr_id=cr.id) }}" style="display:inline">
+                        <button class="btn btn-danger btn-sm"><i class="bi bi-x"></i></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-5">
+    <p class="text-muted">Запросов на изменение нет</p>
+</div>
+{% endif %}
+{% endblock %}

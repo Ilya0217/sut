@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Редактирование' if requirement else 'Новое' }} требование{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Проекты</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('requirements.list_requirements', project_id=project.id) }}">{{ project.name }}</a></li>
+        <li class="breadcrumb-item active">{{ 'Редактирование' if requirement else 'Новое требование' }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-md-8">
+        <h2>{{ 'Редактирование требования' if requirement else 'Новое требование' }}</h2>
+        <form method="POST">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Заголовок *</label>
+                    <input type="text" name="title" class="form-control" required
+                           value="{{ requirement.title if requirement else '' }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Пользовательский ID</label>
+                    <input type="text" name="custom_id" class="form-control"
+                           placeholder="Например: FR-001"
+                           value="{{ requirement.custom_id if requirement and requirement.custom_id else '' }}">
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Текст требования *</label>
+                <textarea name="text" class="form-control" rows="5" required>{{ requirement.text if requirement else '' }}</textarea>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">Категория *</label>
+                    <select name="category" class="form-select" required>
+                        {% for c in ['functional','non_functional','interface','performance','security','derived'] %}
+                        <option value="{{ c }}" {{ 'selected' if requirement and requirement.category == c }}>{{ c }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Приоритет *</label>
+                    <select name="priority" class="form-select" required>
+                        {% for p in ['critical','high','medium','low'] %}
+                        <option value="{{ p }}" {{ 'selected' if requirement and requirement.priority == p }}>{{ p }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Статус *</label>
+                    <select name="status" class="form-select" required>
+                        {% for s in ['draft','active','approved','implemented','verified','deprecated'] %}
+                        <option value="{{ s }}" {{ 'selected' if requirement and requirement.status == s }}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">Родительское требование</label>
+                    <select name="parent_id" class="form-select">
+                        <option value="">— Нет —</option>
+                        {% for pr in parent_reqs %}
+                        <option value="{{ pr.id }}" {{ 'selected' if requirement and requirement.parent_id == pr.id }}>
+                            {{ pr.system_id }} — {{ pr.title | truncate(40) }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Ответственное лицо</label>
+                    <select name="responsible_user_id" class="form-select">
+                        <option value="">— Не назначено —</option>
+                        {% for u in users %}
+                        <option value="{{ u.id }}" {{ 'selected' if requirement and requirement.responsible_user_id == u.id }}>
+                            {{ u.username }} ({{ u.role }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> {{ 'Сохранить' if requirement else 'Создать' }}
+                </button>
+                <a href="{{ url_for('requirements.list_requirements', project_id=project.id) }}"
+                   class="btn btn-secondary">Отмена</a>
+            </div>
+        </form>
+    </div>
+
+    {% if requirement %}
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Информация</div>
+            <div class="card-body">
+                <p><strong>Системный ID:</strong> <code>{{ requirement.system_id }}</code></p>
+                <p><strong>Версия:</strong> {{ requirement.version }}</p>
+                <p><strong>Создано:</strong> {{ requirement.created_at.strftime('%d.%m.%Y %H:%M') }}</p>
+                <p><strong>Обновлено:</strong> {{ requirement.updated_at.strftime('%d.%m.%Y %H:%M') }}</p>
+                {% if requirement.is_baseline %}
+                <p><span class="badge bg-info">В базовой версии</span></p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

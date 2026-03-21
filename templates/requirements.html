@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Требования — {{ project.name }}{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('main.index') }}">Проекты</a></li>
+        <li class="breadcrumb-item active">{{ project.name }}</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-list-check"></i> Требования</h2>
+    <div class="btn-group">
+        {% if current_user.can_create() %}
+        <a href="{{ url_for('requirements.new_requirement', project_id=project.id) }}"
+           class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg"></i> Создать
+        </a>
+        {% endif %}
+        {% if current_user.can_import_export() %}
+        <a href="{{ url_for('import_export.import_data', project_id=project.id) }}"
+           class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-upload"></i> Импорт
+        </a>
+        <div class="btn-group">
+            <button type="button" class="btn btn-outline-success btn-sm dropdown-toggle"
+                    data-bs-toggle="dropdown">
+                <i class="bi bi-download"></i> Экспорт
+            </button>
+            <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('import_export.export_data', project_id=project.id, fmt='xlsx') }}">Excel (.xlsx)</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('import_export.export_data', project_id=project.id, fmt='csv') }}">CSV</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('import_export.export_data', project_id=project.id, fmt='json') }}">JSON</a></li>
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Поиск и фильтры -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Поиск</label>
+                <input type="text" name="q" class="form-control form-control-sm"
+                       value="{{ search_q }}" placeholder="ID, название, текст...">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Статус</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for s in ['draft','active','approved','implemented','verified','deprecated'] %}
+                    <option value="{{ s }}" {{ 'selected' if filters.get('status') == s }}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Приоритет</label>
+                <select name="priority" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for p in ['critical','high','medium','low'] %}
+                    <option value="{{ p }}" {{ 'selected' if filters.get('priority') == p }}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Категория</label>
+                <select name="category" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for c in ['functional','non_functional','interface','performance','security','derived'] %}
+                    <option value="{{ c }}" {{ 'selected' if filters.get('category') == c }}>{{ c }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Сортировка</label>
+                <select name="sort_by" class="form-select form-select-sm">
+                    <option value="updated_at" {{ 'selected' if sort_by == 'updated_at' }}>Дата изменения</option>
+                    <option value="created_at" {{ 'selected' if sort_by == 'created_at' }}>Дата создания</option>
+                    <option value="priority" {{ 'selected' if sort_by == 'priority' }}>Приоритет</option>
+                    <option value="title" {{ 'selected' if sort_by == 'title' }}>Название</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-sm btn-outline-primary w-100">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Таблица требований -->
+{% if requirements %}
+<div class="table-responsive">
+    <table class="table table-hover table-sm">
+        <thead class="table-light">
+            <tr>
+                <th>ID</th>
+                <th>Польз. ID</th>
+                <th>Название</th>
+                <th>Статус</th>
+                <th>Приоритет</th>
+                <th>Категория</th>
+                <th>Версия</th>
+                <th>Ответственный</th>
+                <th>Обновлено</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for req in requirements %}
+            <tr class="{{ 'table-danger' if req.is_deleted else '' }}">
+                <td><code>{{ req.system_id }}</code></td>
+                <td>{{ req.custom_id or '—' }}</td>
+                <td>
+                    <a href="{{ url_for('requirements.view_requirement', project_id=project.id, req_id=req.id) }}">
+                        {{ req.title | truncate(50) }}
+                    </a>
+                    {% if req.is_baseline %}<span class="badge bg-info">Baseline</span>{% endif %}
+                </td>
+                <td><span class="badge bg-{{ 'success' if req.status == 'approved' else 'warning' if req.status == 'draft' else 'secondary' }}">{{ req.status }}</span></td>
+                <td><span class="badge bg-{{ 'danger' if req.priority == 'critical' else 'warning' if req.priority == 'high' else 'info' if req.priority == 'medium' else 'secondary' }}">{{ req.priority }}</span></td>
+                <td>{{ req.category }}</td>
+                <td>v{{ req.version }}</td>
+                <td>{{ req.responsible_user.username if req.responsible_user else '—' }}</td>
+                <td>{{ req.updated_at.strftime('%d.%m.%Y %H:%M') if req.updated_at else '—' }}</td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        {% if current_user.can_edit() and not req.is_deleted %}
+                        <a href="{{ url_for('requirements.edit_req', project_id=project.id, req_id=req.id) }}"
+                           class="btn btn-outline-primary" title="Редактировать">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        {% endif %}
+                        {% if current_user.can_delete() and not req.is_deleted %}
+                        <form method="POST" action="{{ url_for('requirements.delete_req', project_id=project.id, req_id=req.id) }}"
+                              style="display:inline" onsubmit="return confirm('Удалить требование?')">
+                            <button class="btn btn-outline-danger btn-sm" title="Удалить">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Пагинация -->
+{% if pagination.pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm justify-content-center">
+        {% if pagination.has_prev %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.prev_num }}&q={{ search_q }}&status={{ filters.get('status','') }}&priority={{ filters.get('priority','') }}&category={{ filters.get('category','') }}">Назад</a>
+        </li>
+        {% endif %}
+        {% for p in pagination.iter_pages() %}
+            {% if p %}
+            <li class="page-item {{ 'active' if p == pagination.page }}">
+                <a class="page-link" href="?page={{ p }}&q={{ search_q }}&status={{ filters.get('status','') }}&priority={{ filters.get('priority','') }}&category={{ filters.get('category','') }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.next_num }}&q={{ search_q }}&status={{ filters.get('status','') }}&priority={{ filters.get('priority','') }}&category={{ filters.get('category','') }}">Далее</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="text-center py-5">
+    <i class="bi bi-inbox display-1 text-muted"></i>
+    <p class="mt-3 text-muted">Требований пока нет</p>
+</div>
+{% endif %}
+
+<!-- Навигация проекта -->
+<hr>
+<div class="btn-group btn-group-sm">
+    <a href="{{ url_for('tracelinks.list_tracelinks', project_id=project.id) }}" class="btn btn-outline-info">
+        <i class="bi bi-diagram-2"></i> Связи трассировки
+    </a>
+    <a href="{{ url_for('changes.list_baselines', project_id=project.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-bookmark"></i> Базовые версии
+    </a>
+    <a href="{{ url_for('changes.list_change_requests', project_id=project.id) }}" class="btn btn-outline-warning">
+        <i class="bi bi-pencil-square"></i> Запросы на изменение
+    </a>
+</div>
+{% endblock %}
