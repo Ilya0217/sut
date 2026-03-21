@@ -47,6 +47,30 @@ def create_requirement(project_id, user_data, user_id):
                 field=field,
             )
 
+    category = user_data.get("category", "")
+    if category not in Requirement.VALID_CATEGORIES:
+        raise RequirementError(
+            "ERR_INVALID_CATEGORY",
+            f"Недопустимая категория: {category}",
+            field="category",
+        )
+
+    priority = user_data.get("priority", "")
+    if priority not in Requirement.VALID_PRIORITIES:
+        raise RequirementError(
+            "ERR_INVALID_PRIORITY",
+            f"Недопустимый приоритет: {priority}",
+            field="priority",
+        )
+
+    status = user_data.get("status", "")
+    if status not in Requirement.VALID_STATUSES:
+        raise RequirementError(
+            "ERR_INVALID_STATUS",
+            f"Недопустимый статус: {status}",
+            field="status",
+        )
+
     custom_id = user_data.get("custom_id", "").strip()
     if custom_id:
         existing = Requirement.query.filter_by(
@@ -247,10 +271,14 @@ def hard_delete_requirement(requirement_id, user_id):
             "ERR_REQUIREMENT_NOT_FOUND", "Требование не найдено"
         )
 
-    if requirement.responsible_user_id != user_id:
+    from models import User
+    acting_user = db.session.get(User, user_id)
+    is_responsible = (requirement.responsible_user_id == user_id)
+    is_admin = (acting_user is not None and acting_user.role == User.ROLE_ADMIN)
+    if not is_responsible and not is_admin:
         raise RequirementError(
             "ERR_FORBIDDEN",
-            "Безвозвратное удаление разрешено только ответственному лицу",
+            "Безвозвратное удаление разрешено только ответственному лицу или администратору",
         )
 
     log_action(

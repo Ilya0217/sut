@@ -28,6 +28,12 @@ def create_trace_link(source_id, target_id, link_type, user_id, description=""):
     Входные данные: source_id, target_id, link_type, user_id, description
     Выходные данные: объект TraceLink или исключение
     """
+    if source_id == target_id:
+        raise TraceLinkError(
+            "ERR_SELF_LINK",
+            "Нельзя создать связь требования с самим собой",
+        )
+
     source = Requirement.query.filter_by(id=source_id, is_deleted=False).first()
     if source is None:
         raise TraceLinkError(
