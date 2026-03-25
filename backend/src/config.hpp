@@ -2,7 +2,7 @@
 Модуль: config.hpp
 Назначение: Конфигурация приложения СУТ
 Автор: Разработчик
-Дата создания: 21.03.2026
+Дата создания: 25.03.2026
 */
 
 #ifndef CONFIG_HPP
@@ -15,6 +15,7 @@ struct Config {
     std::string database_url;
     std::string secret_key;
     std::string cors_origin;
+    std::string default_admin_password;
     int port = 5000;
 
     /*
@@ -26,15 +27,14 @@ struct Config {
     static Config load()
     {
         Config cfg;
-        cfg.database_url = get_env(
-            "DATABASE_URL",
-            "postgresql://sut_user:sut_password@localhost:5432/sut"
-        );
-        cfg.secret_key = get_env(
-            "SECRET_KEY",
-            "sut-secret-key-change-in-production"
-        );
-        cfg.cors_origin = get_env("CORS_ORIGIN", "http://localhost:3000");
+        cfg.database_url = get_env("DATABASE_URL",
+            "postgresql://sut_user:sut_password@localhost:5432/sut");
+        cfg.secret_key = get_env("SECRET_KEY",
+            "sut-secret-key-change-in-production");
+        cfg.cors_origin = get_env("CORS_ORIGIN",
+            "http://localhost:3000");
+        cfg.default_admin_password = get_env("ADMIN_PASSWORD",
+            "admin123");
         cfg.port = std::stoi(get_env("PORT", "5000"));
         return cfg;
     }
@@ -43,7 +43,8 @@ private:
     static std::string get_env(const char* name, const char* fallback)
     {
         const char* val = std::getenv(name);
-        return (val != nullptr) ? std::string(val) : std::string(fallback);
+        if (val != nullptr) return std::string(val);
+        return std::string(fallback);
     }
 };
 

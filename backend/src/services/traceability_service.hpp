@@ -1,16 +1,16 @@
 /*
 Модуль: traceability_service.hpp
-Назначение: Сервис управления связями трассировки
+Назначение: Интерфейс сервиса трассировки
 Автор: Разработчик
-Дата создания: 21.03.2026
-Требования: FR-05, FR-06, FR-12, LLR_TraceLinkService_CreateLink_01-02
+Дата создания: 25.03.2026
+Требования: FR-05, FR-06, FR-12, FR-16
 */
 
 #ifndef TRACEABILITY_SERVICE_HPP
 #define TRACEABILITY_SERVICE_HPP
 
 #include "models.hpp"
-
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -27,12 +27,7 @@ TraceLink create_trace_link(int source_id, int target_id,
     const std::string& description = "");
 void delete_trace_link_svc(int link_id, int user_id);
 void check_integrity(int req_id, int user_id);
-
-struct IntegrityIssue {
-    int link_id;
-    std::string reason;
-};
-std::vector<IntegrityIssue> run_full_integrity_check(
+std::vector<nlohmann::json> run_full_integrity_check(
     int project_id, int user_id);
 
 #endif

@@ -2,7 +2,7 @@
 Модуль: password_utils.cpp
 Назначение: Реализация утилит хеширования паролей и генерации ID
 Автор: Разработчик
-Дата создания: 21.03.2026
+Дата создания: 25.03.2026
 Требования: Quality.Security.AccessAndStorage, LLR_RequirementService_Create_01
 */
 
@@ -11,7 +11,6 @@
 #include <iomanip>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <random>
 #include <sstream>
 
 static const int SALT_LENGTH = 16;
@@ -58,12 +57,10 @@ std::string hash_password(const std::string& password)
     PKCS5_PBKDF2_HMAC(
         password.c_str(), static_cast<int>(password.size()),
         salt, SALT_LENGTH, HASH_ITERATIONS,
-        EVP_sha256(), KEY_LENGTH, key
-    );
+        EVP_sha256(), KEY_LENGTH, key);
 
-    std::string salt_hex = bytes_to_hex(salt, SALT_LENGTH);
-    std::string key_hex = bytes_to_hex(key, KEY_LENGTH);
-    return salt_hex + ":" + key_hex;
+    return bytes_to_hex(salt, SALT_LENGTH) + ":"
+         + bytes_to_hex(key, KEY_LENGTH);
 }
 
 bool check_password(const std::string& password, const std::string& hash)
@@ -71,19 +68,16 @@ bool check_password(const std::string& password, const std::string& hash)
     auto sep = hash.find(':');
     if (sep == std::string::npos) return false;
 
-    std::string salt_hex = hash.substr(0, sep);
+    auto salt_bytes = hex_to_bytes(hash.substr(0, sep));
     std::string stored_key_hex = hash.substr(sep + 1);
-    auto salt_bytes = hex_to_bytes(salt_hex);
 
     unsigned char key[KEY_LENGTH];
     PKCS5_PBKDF2_HMAC(
         password.c_str(), static_cast<int>(password.size()),
         salt_bytes.data(), static_cast<int>(salt_bytes.size()),
-        HASH_ITERATIONS, EVP_sha256(), KEY_LENGTH, key
-    );
+        HASH_ITERATIONS, EVP_sha256(), KEY_LENGTH, key);
 
-    std::string computed_hex = bytes_to_hex(key, KEY_LENGTH);
-    return computed_hex == stored_key_hex;
+    return bytes_to_hex(key, KEY_LENGTH) == stored_key_hex;
 }
 
 std::string generate_req_id()
@@ -92,7 +86,8 @@ std::string generate_req_id()
     RAND_bytes(buf, 4);
     std::string hex = bytes_to_hex(buf, 4);
     for (auto& ch : hex) {
-        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        ch = static_cast<char>(
+            std::toupper(static_cast<unsigned char>(ch)));
     }
     return "REQ-" + hex;
 }
