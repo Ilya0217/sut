@@ -48,12 +48,11 @@ static void handle_list_baselines(const httplib::Request& req, httplib::Response
     auto baselines = Database::instance().get_baselines(pid);
     json arr = json::array();
     for (const auto& bl : baselines) {
-        arr.push_back({
+        arr.push_back(json{
             {"id", bl.id}, {"name", bl.name},
             {"description", bl.description},
             {"created_at", bl.created_at},
-            {"requirements_count", bl.requirements_count}
-        });
+            {"requirements_count", bl.requirements_count}});
     }
     json_response(res, arr);
 }
@@ -79,18 +78,23 @@ static void handle_create_baseline(const httplib::Request& req, httplib::Respons
         }
     }
 
-    try {
-        auto bl = create_baseline_svc(
-            pid, name, req_ids, user->id, body.value("description", ""));
-        json_response(res, {
-            {"id", bl.id}, {"name", bl.name},
-            {"description", bl.description},
-            {"created_at", bl.created_at},
-            {"requirements_count", bl.requirements_count}
-        }, 201);
-    } catch (const ChangeError& e) {
-        json_error(res, e.what(), 400);
+    if (name.empty()) {
+        json_error(res, "Название обязательно", 400);
+        return;
     }
+    if (req_ids.empty()) {
+        json_error(res, "Выберите хотя бы одно требование", 400);
+        return;
+    }
+    auto bl = Database::instance().create_baseline(
+        pid, name, body.value("description", ""),
+        user->id, req_ids);
+    json_response(res, json{
+        {"id", bl.id}, {"name", bl.name},
+        {"description", bl.description},
+        {"created_at", bl.created_at},
+        {"requirements_count", bl.requirements_count}
+    }, 201);
 }
 
 /*

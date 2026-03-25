@@ -141,9 +141,11 @@ static void handle_integrity_check(const httplib::Request& req, httplib::Respons
     auto issues = run_full_integrity_check(pid, user->id);
     json arr = json::array();
     for (const auto& issue : issues) {
-        arr.push_back({{"link_id", issue.link_id}, {"reason", issue.reason}});
+        arr.push_back(issue);
     }
-    json_response(res, {{"issues_count", issues.size()}, {"issues", arr}});
+    json_response(res, json{
+        {"issues_count", static_cast<int>(issues.size())},
+        {"issues", arr}});
 }
 
 void register_tracelink_routes(httplib::Server& svr)
