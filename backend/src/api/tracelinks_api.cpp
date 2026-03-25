@@ -1,0 +1,117 @@
+/*
+Модуль: tracelinks_api.cpp
+Назначение: Реализация REST API связей трассировки
+Автор: Разработчик
+Дата создания: 21.03.2026
+Требования: Interface.Software.TraceLinks, FR-05, FR-06
+*/
+
+#include "tracelinks_api.hpp"
+#include "middleware.hpp"
+#include "services/traceability_service.hpp"
+
+static json link_to_json(const TraceLink& l)
+{
+    return {
+        {"id", l.id},
+        {"source_req_id", l.source_req_id},
+        {"source_system_id", l.source_system_id},
+        {"source_title", l.source_title},
+        {"target_req_id", l.target_req_id},
+        {"target_system_id", l.target_system_id},
+        {"target_title", l.target_title},
+        {"link_type", l.link_type},
+        {"description", l.description},
+        {"status", l.status},
+        {"created_at", l.created_at},
+        {"created_by", l.creator_username.empty()
+            ? json(nullptr) : json(l.creator_username)}
+    };
+}
+
+void register_tracelink_routes(httplib::Server& svr)
+{
+    svr.Get(R"(/api/projects/(\d+)/tracelinks)",
+        [](const httplib::Request& req, httplib::Response& res)
+    {
+        auto user = require_auth(req, res);
+        if (!user) return;
+        int pid = std::stoi(req.matches[1]);
+        auto links = Database::instance().get_links_for_project(pid);
+        json arr = json::array();
+        for (const auto& l : links) arr.push_back(link_to_json(l));
+        json_response(res, arr);
+    });
+
+    svr.Post(R"(/api/projects/(\d+)/tracelinks)",
+        [](const httplib::Request& req, httplib::Response& res)
+    {
+        auto user = require_auth(req, res);
+        if (!user) return;
+        if (!user->can_manage_links()) {
+            json_error(res, "Недостаточно прав", 403);
+            return;
+        }
+        auto body = parse_json_body(req);
+        try {
+            auto link = create_trace_link(
+                body.value("source_req_id", 0),
+                body.value("target_req_id", 0),
+                body.value("link_type", "derives_from"),
+                user->id, body.value("description", ""));
+            json_response(res, link_to_json(link), 201);
+        } catch (const TraceLinkError& e) {
+            json_response(res, {{"error", e.what()}, {"code", e.code}}, 400);
+        }
+    });
+
+    svr.Delete(R"(/api/projects/(\d+)/tracelinks/(\d+))",
+        [](const httplib::Request& req, httplib::Response& res)
+    {
+        auto user = require_auth(req, res);
+        if (!user) return;
+        if (!user->can_manage_links()) {
+            json_error(res, "Недостаточно прав", 403);
+            return;
+        }
+        int lid = std::stoi(req.matches[2]);
+        try {
+            delete_trace_link_svc(lid, user->id);
+            json_response(res, {{"message", "Удалено"}});
+        } catch (const TraceLinkError& e) {
+            json_response(res, {{"error", e.what()}, {"code", e.code}}, 400);
+        }
+    });
+
+    svr.Get(R"(/api/projects/(\d+)/tracelinks/requirement/(\d+))",
+        [](const httplib::Request& req, httplib::Response& res)
+    {
+        auto user = require_auth(req, res);
+        if (!user) return;
+        int rid = std::stoi(req.matches[2]);
+        auto links = Database::instance().get_links_for_requirement(rid);
+        json arr = json::array();
+        for (const auto& l : links) arr.push_back(link_to_json(l));
+        json_response(res, arr);
+    });
+
+    svr.Post(R"(/api/projects/(\d+)/tracelinks/integrity_check)",
+        [](const httplib::Request& req, httplib::Response& res)
+    {
+        auto user = require_auth(req, res);
+        if (!user) return;
+        if (!user->can_run_integrity_check()) {
+            json_error(res, "Недостаточно прав", 403);
+            return;
+        }
+        int pid = std::stoi(req.matches[1]);
+        auto issues = run_full_integrity_check(pid, user->id);
+        json arr = json::array();
+        for (const auto& issue : issues) {
+            arr.push_back({{"link_id", issue.link_id},
+                           {"reason", issue.reason}});
+        }
+        json_response(res, {{"issues_count", issues.size()},
+                            {"issues", arr}});
+    });
+}
