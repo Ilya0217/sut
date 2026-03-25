@@ -1,0 +1,56 @@
+@startuml "Процесс 4: Процесс изменения требования"
+
+title Процесс 4: Процесс изменения требования (Change Request)
+
+actor "Аналитик" as Analyst
+actor "Рецензент" as Reviewer
+participant "WebClient" as WC
+participant "ApiGateway" as AG
+participant "ChangeManagementService\n(change_service.cpp)" as CMS
+participant "NotificationService\n(notification_service.cpp)" as NS
+participant "AuditService" as AS
+database "PostgreSQL" as DB
+
+== Создание запроса на изменение ==
+
+Analyst -> WC : Инициирует запрос\nна изменение
+WC -> AG : POST /api/projects/{id}/change_requests\n{requirement_id, justification,\nchanges_description, assigned_to}
+AG -> AG : require_auth() → Analyst
+
+AG -> CMS : create_change_request(req_id, user_id, ...)
+CMS -> DB : SELECT FROM requirements\nWHERE id = req_id AND is_baseline = true
+DB --> CMS : Requirement (baseline)
+
+CMS -> DB : INSERT INTO change_requests\n(status = 'pending')
+DB --> CMS : ChangeRequest
+
+CMS -> NS : create_notification(assigned_to,\n"change_request_created")
+NS -> DB : INSERT INTO notifications
+
+CMS -> AS : log_action("create", "change_request")
+AS -> DB : INSERT INTO audit_log
+
+CMS --> AG : ChangeRequest
+AG --> WC : JSON {id, status: "pending", ...}
+WC --> Analyst : Запрос создан
+
+== Согласование ==
+
+Reviewer -> WC : Просматривает запрос
+WC -> AG : POST /api/projects/{id}/change_requests/{cr_id}/approve\n{comment}
+AG -> AG : require_auth() → Reviewer\n(проверка роли: reviewer/admin)
+
+AG -> CMS : approve_change_request(cr_id, user_id, comment)
+CMS -> DB : SELECT FROM change_requests\nWHERE id = cr_id
+DB --> CMS : ChangeRequest (status = 'pending')
+
+CMS -> DB : UPDATE change_requests\nSET status = 'approved',\nresolved_at = NOW()
+
+CMS -> AS : log_action("approve", "change_request")
+AS -> DB : INSERT INTO audit_log
+
+CMS --> AG : ChangeRequest (approved)
+AG --> WC : JSON {status: "approved", ...}
+WC --> Reviewer : Запрос одобрен
+
+@enduml

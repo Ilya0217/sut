@@ -3,6 +3,7 @@
 Назначение: Точка входа веб-приложения СУТ (C++ бэкенд)
 Автор: Разработчик
 Дата создания: 21.03.2026
+Изменения: 25.03.2026 — исправлен deadlock, добавлен exception handler
 Требования: Архитектура ПО (ApiGateway)
 */
 
@@ -27,11 +28,6 @@
 #include <iostream>
 
 /*
-Назначение: Создание администратора по умолчанию
-Входные данные: нет
-Выходные данные: нет
-*/
-/*
 Назначение: Создание или обновление администратора по умолчанию
 Входные данные: нет
 Выходные данные: нет
@@ -42,8 +38,8 @@ static void create_default_admin()
     std::string pw_hash = hash_password("admin123");
 
     if (!admin.has_value()) {
-        Database::instance().create_user("admin", "admin@sut.local",
-            pw_hash, "admin");
+        Database::instance().create_user(
+            "admin", "admin@sut.local", pw_hash, "admin");
         std::cout << "Создан администратор: admin / admin123" << std::endl;
         return;
     }
@@ -64,59 +60,61 @@ static void register_import_export_routes(httplib::Server& svr)
     svr.Get(R"(/api/projects/(\d+)/export/(\w+))",
         [](const httplib::Request& req, httplib::Response& res)
     {
-        auto user = require_auth(req, res);
-        if (!user) return;
-        if (!user->can_import_export()) {
-            json_error(res, "Недостаточно прав", 403);
-            return;
-        }
-        int pid = std::stoi(req.matches[1]);
-        std::string fmt = req.matches[2];
+        try {
+            auto user = require_auth(req, res);
+            if (!user) return;
+            if (!user->can_import_export()) {
+                json_error(res, "Недостаточно прав", 403);
+                return;
+            }
+            int pid = std::stoi(req.matches[1]);
+            std::string fmt = req.matches[2];
 
-        if (fmt == "json") {
-            std::string content = export_to_json(pid, user->id);
-            res.set_content(content, "application/json");
-        } else if (fmt == "csv") {
-            std::string content = export_to_csv(pid, user->id);
-            res.set_content(content, "text/csv");
-        } else {
-            json_error(res, "Неподдерживаемый формат", 400);
+            if (fmt == "json") {
+                res.set_content(export_to_json(pid, user->id),
+                    "application/json");
+            } else if (fmt == "csv") {
+                res.set_content(export_to_csv(pid, user->id), "text/csv");
+            } else {
+                json_error(res, "Неподдерживаемый формат", 400);
+            }
+        } catch (const std::exception& e) {
+            json_error(res, e.what(), 500);
         }
     });
 
     svr.Post(R"(/api/projects/(\d+)/import)",
         [](const httplib::Request& req, httplib::Response& res)
     {
-        auto user = require_auth(req, res);
-        if (!user) return;
-        if (!user->can_import_export()) {
-            json_error(res, "Недостаточно прав", 403);
-            return;
-        }
-        int pid = std::stoi(req.matches[1]);
-
-        if (!req.has_file("file")) {
-            json_error(res, "Файл не выбран", 400);
-            return;
-        }
-        auto file = req.get_file_value("file");
-        std::string filename = file.filename;
-        std::string content = file.content;
-
         try {
+            auto user = require_auth(req, res);
+            if (!user) return;
+            if (!user->can_import_export()) {
+                json_error(res, "Недостаточно прав", 403);
+                return;
+            }
+            int pid = std::stoi(req.matches[1]);
+
+            if (!req.has_file("file")) {
+                json_error(res, "Файл не выбран", 400);
+                return;
+            }
+            auto file = req.get_file_value("file");
+
             nlohmann::json result;
-            if (filename.find(".json") != std::string::npos) {
-                result = import_from_json(content, pid, user->id);
-            } else if (filename.find(".csv") != std::string::npos) {
-                result = import_from_csv(content, pid, user->id);
+            if (file.filename.find(".json") != std::string::npos) {
+                result = import_from_json(file.content, pid, user->id);
+            } else if (file.filename.find(".csv") != std::string::npos) {
+                result = import_from_csv(file.content, pid, user->id);
             } else {
                 json_error(res, "Неподдерживаемый формат", 400);
                 return;
             }
             json_response(res, result);
         } catch (const ImportExportError& e) {
-            json_response(res,
-                {{"error", e.what()}, {"code", e.code}}, 400);
+            json_response(res, {{"error", e.what()}, {"code", e.code}}, 400);
+        } catch (const std::exception& e) {
+            json_error(res, e.what(), 500);
         }
     });
 }
@@ -131,6 +129,20 @@ int main()
     create_default_admin();
 
     httplib::Server svr;
+
+    svr.set_exception_handler(
+        [](const httplib::Request&, httplib::Response& res,
+            std::exception_ptr ep)
+    {
+        std::string msg = "Internal Server Error";
+        try {
+            if (ep) std::rethrow_exception(ep);
+        } catch (const std::exception& e) {
+            msg = e.what();
+            std::cerr << "Ошибка: " << msg << std::endl;
+        }
+        json_error(res, msg, 500);
+    });
 
     svr.set_pre_routing_handler(
         [&cfg](const httplib::Request& req, httplib::Response& res)

@@ -1,0 +1,62 @@
+@startuml "Процесс 5: Аутентификация и авторизация"
+
+title Процесс 5: Аутентификация и авторизация
+
+actor "Пользователь" as User
+participant "WebClient" as WC
+participant "ApiGateway\n(middleware.hpp)" as AG
+participant "SessionManager\n(session_manager.cpp)" as SM
+participant "UserManagementService\n(user_service.cpp)" as UMS
+participant "UserRepository\n(database.cpp)" as UR
+participant "AuditService" as AS
+database "PostgreSQL" as DB
+
+== Аутентификация (вход) ==
+
+User -> WC : Вводит логин/пароль
+WC -> AG : POST /api/auth/login\n{username, password}
+
+AG -> UMS : authenticate_user(username, password)
+UMS -> UR : find_user_by_username(username)
+UR -> DB : SELECT FROM users\nWHERE username = $1
+DB --> UR : User (с password_hash)
+UR --> UMS : User
+
+UMS -> UMS : check_password(password, hash)\nPBKDF2-HMAC-SHA256\n100000 итераций
+UMS --> AG : User (аутентифицирован)
+
+AG -> SM : create_session(user.id)
+SM -> SM : generate_session_token()\n(32 байт, OpenSSL RAND)
+SM --> AG : token
+
+AG -> AG : Set-Cookie: session=<token>;\nPath=/; HttpOnly; SameSite=Lax
+AG --> WC : JSON {id, username, role}\n+ Set-Cookie
+WC -> WC : Сохранение user в Pinia store
+WC --> User : Перенаправление\nна главную страницу
+
+== Авторизация (проверка прав) ==
+
+User -> WC : Действие (например,\nсоздать требование)
+WC -> AG : POST /api/projects/{id}/requirements\nCookie: session=<token>
+
+AG -> SM : extract_token(Cookie header)
+SM --> AG : token
+
+AG -> SM : get_user_id(token)
+SM --> AG : user_id
+
+AG -> UR : find_user_by_id(user_id)
+UR -> DB : SELECT FROM users
+DB --> UR : User
+UR --> AG : User
+
+AG -> AG : user.can_create()\n(проверка роли:\nanalyst, admin → OK\nreviewer → 403)
+
+alt Права достаточны
+    AG -> AG : Передача в обработчик
+else Недостаточно прав
+    AG --> WC : 403 {error: "Недостаточно прав"}
+    WC --> User : Сообщение об ошибке
+end
+
+@enduml

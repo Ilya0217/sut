@@ -106,7 +106,7 @@ public:
 private:
     Database() = default;
     std::unique_ptr<pqxx::connection> conn_;
-    std::mutex mutex_;
+    std::recursive_mutex mutex_;
 
     Requirement row_to_requirement(const pqxx::row& r);
     TraceLink row_to_trace_link(const pqxx::row& r);
