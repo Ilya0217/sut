@@ -1,0 +1,40 @@
+@startuml "Диаграммы последовательностей СУТ"
+
+title Процесс 1: Создание требования
+
+actor "Пользователь" as User
+participant "WebClient\n(Vue.js)" as WC
+participant "ApiGateway\n(nginx + cpp-httplib)" as AG
+participant "SessionManager" as SM
+participant "UserManagementService\n(user_service.cpp)" as UMS
+participant "RequirementsService\n(requirement_service.cpp)" as RS
+participant "RequirementsRepository\n(database.cpp)" as RR
+participant "AuditService\n(audit_service.cpp)" as AS
+database "PostgreSQL" as DB
+
+User -> WC : Заполняет форму\nтребования
+WC -> AG : POST /api/projects/{id}/requirements\n{title, text, category, priority, status}
+AG -> SM : extract_token(Cookie)
+SM --> AG : user_id
+AG -> UMS : find_user_by_id(user_id)
+UMS -> DB : SELECT FROM users
+DB --> UMS : User
+UMS --> AG : User (авторизация OK)
+
+AG -> RS : create_requirement(project_id, data, user_id)
+RS -> RR : check_custom_id_exists()
+RR -> DB : SELECT FROM requirements
+DB --> RR : result
+RS -> RS : generate_req_id() → "REQ-XXXX"
+RS -> RR : create_requirement(req)
+RR -> DB : INSERT INTO requirements
+DB --> RR : id, created_at
+RS -> RR : add_requirement_history("create")
+RR -> DB : INSERT INTO requirement_history
+RS -> AS : log_action("create", "requirement")
+AS -> DB : INSERT INTO audit_log
+RS --> AG : Requirement
+AG --> WC : JSON {id, system_id, title, ...}
+WC --> User : Отображение\nсозданного требования
+
+@enduml

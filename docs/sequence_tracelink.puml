@@ -1,0 +1,45 @@
+@startuml "Процесс 2: Создание связи трассировки"
+
+title Процесс 2: Создание связи трассировки
+
+actor "Пользователь" as User
+participant "WebClient" as WC
+participant "ApiGateway" as AG
+participant "TraceabilityService\n(traceability_service.cpp)" as TS
+participant "RequirementsService" as RS
+participant "TraceabilityRepository\n(database.cpp)" as TR
+participant "AuditService" as AS
+database "PostgreSQL" as DB
+
+User -> WC : Выбирает исходное\nи целевое требования
+WC -> AG : POST /api/projects/{id}/tracelinks\n{source_req_id, target_req_id, link_type}
+AG -> AG : require_auth() → User
+
+AG -> TS : create_trace_link(source_id, target_id, type, user_id)
+TS -> RS : find_requirement_by_id(source_id)
+RS -> DB : SELECT FROM requirements
+DB --> RS : Requirement (source)
+RS --> TS : OK
+
+TS -> RS : find_requirement_by_id(target_id)
+RS -> DB : SELECT FROM requirements
+DB --> RS : Requirement (target)
+RS --> TS : OK
+
+TS -> TS : Проверка: source ≠ target
+TS -> TR : check_trace_link_exists(source, target, type)
+TR -> DB : SELECT FROM trace_links
+DB --> TR : not found → OK
+
+TS -> TR : create_trace_link()
+TR -> DB : INSERT INTO trace_links
+DB --> TR : TraceLink
+
+TS -> AS : log_action("create", "trace_link")
+AS -> DB : INSERT INTO audit_log
+
+TS --> AG : TraceLink
+AG --> WC : JSON {id, source_req_id, target_req_id, ...}
+WC --> User : Связь отображена\nв таблице
+
+@enduml

@@ -1,0 +1,156 @@
+@startuml "Архитектура СУТ — Компонентная модель"
+
+skinparam componentStyle uml2
+skinparam backgroundColor #FEFEFE
+skinparam component {
+    BackgroundColor<<presentation>> #D4E6F1
+    BackgroundColor<<gateway>> #F9E79F
+    BackgroundColor<<service>> #D5F5E3
+    BackgroundColor<<repository>> #FADBD8
+    BackgroundColor<<storage>> #E8DAEF
+}
+skinparam arrow {
+    Color #555555
+    Thickness 1.5
+}
+skinparam defaultFontSize 12
+skinparam packageStyle rectangle
+
+title Архитектура системы управления требованиями (СУТ)\nКомпонентная диаграмма по реализованному коду
+
+' ==========================================
+' ПРЕЗЕНТАЦИОННЫЙ СЛОЙ
+' ==========================================
+package "Презентационный слой" as PL #D4E6F1 {
+    component [**WebClient**\n---\nVue.js 3 + Vite\n---\nLoginView | ProjectsView\nRequirementsView | RequirementDetail\nRequirementForm | TraceLinksView\nBaselinesView | ChangeRequestsView\nNotificationsView | AuditView\nUsersView] <<presentation>> as WC
+}
+
+' ==========================================
+' СЕРВИСНЫЙ ШЛЮЗ
+' ==========================================
+package "Сервисный шлюз" as GW #F9E79F {
+    component [**ApiGateway**\n---\nnginx (фронтенд прокси)\n+ cpp-httplib (бэкенд)\n---\nCORS | Маршрутизация\nАутентификация (Cookie/Session)\nRate limiting] <<gateway>> as AG
+}
+
+' ==========================================
+' СЕРВИСЫ БИЗНЕС-ЛОГИКИ
+' ==========================================
+package "Сервисы бизнес-логики" as BL #D5F5E3 {
+    component [**RequirementsService**\n---\nrequirement_service.cpp\n---\nСоздание / Редактирование\nУдаление / Восстановление\nВерсионирование\nИерархия требований\nФильтрация и поиск] <<service>> as RS
+
+    component [**TraceabilityService**\n---\ntraceability_service.cpp\n---\nСоздание связей\nПроверка целостности\nОбнаружение \"подозрительных\"\nИсключение дубликатов] <<service>> as TS
+
+    component [**ChangeManagementService**\n---\nchange_service.cpp\n---\nЗапросы на изменение\nБазовые версии (Baselines)\nСогласование / Отклонение\nНазначение ответственных] <<service>> as CMS
+
+    component [**ImportExportService**\n---\nimport_export_service.cpp\n---\nЭкспорт: JSON, CSV\nИмпорт: JSON, CSV\nВалидация данных] <<service>> as IES
+
+    component [**NotificationService**\n---\nnotification_service.cpp\n---\nУведомления пользователей\nКаналы: UI\nОтслеживание прочитанности] <<service>> as NS
+
+    component [**AuditService**\n---\naudit_service.cpp\n---\nЛогирование действий\nНеизменяемый журнал\nФильтрация по типу/юзеру] <<service>> as AS
+
+    component [**UserManagementService**\n---\nuser_service.cpp\n---\nРегистрация / Аутентификация\nРолевая модель (admin,\nanalyst, reviewer)\nУправление правами] <<service>> as UMS
+}
+
+' ==========================================
+' СЕРВИСЫ ДАННЫХ
+' ==========================================
+package "Сервисы данных" as DL #FADBD8 {
+    component [**RequirementsRepository**\n---\ndatabase.cpp: users, projects,\nrequirements, requirement_history\n---\nCRUD требований\nОптимизация запросов\nПагинация и поиск] <<repository>> as RR
+
+    component [**TraceabilityRepository**\n---\ndatabase.cpp: trace_links\n---\nCRUD связей\nГраф связей\nСсылочная целостность] <<repository>> as TR
+
+    component [**AuditRepository**\n---\ndatabase.cpp: audit_log\n---\nЗапись логов\nДолгосрочное хранение\nПоиск по логам] <<repository>> as AR
+
+    component [**UserRepository**\n---\ndatabase.cpp: users\n---\nCRUD пользователей\nУправление ролями\nХеширование паролей] <<repository>> as UR
+
+    component [**ChangeRepository**\n---\ndatabase.cpp: change_requests,\nbaselines\n---\nCRUD запросов на изменение\nУправление базовыми версиями] <<repository>> as CR
+
+    component [**NotificationRepository**\n---\ndatabase.cpp: notifications\n---\nCRUD уведомлений\nСчётчик непрочитанных] <<repository>> as NR
+}
+
+' ==========================================
+' ХРАНИЛИЩЕ
+' ==========================================
+package "Хранилище" as ST #E8DAEF {
+    database "**PostgreSQL 16**\n---\nusers | projects\nrequirements\nrequirement_history\ntrace_links\nchange_requests\nbaselines\nnotifications\naudit_log" <<storage>> as DB
+}
+
+' ==========================================
+' СВЯЗИ: Презентация → Шлюз
+' ==========================================
+WC -down-> AG : HTTP/REST\n(axios + proxy)
+
+' ==========================================
+' СВЯЗИ: Шлюз → Сервисы (маршрутизация)
+' ==========================================
+AG -down-> RS : auth_api.cpp\nrequirements_api.cpp
+AG -down-> TS : tracelinks_api.cpp
+AG -down-> CMS : changes_api.cpp
+AG -down-> IES : main.cpp\n(import/export routes)
+AG -down-> NS : notifications_api.cpp
+AG -down-> AS : audit_api.cpp
+AG -down-> UMS : users_api.cpp\nauth_api.cpp
+
+' ==========================================
+' СВЯЗИ: Межсервисные
+' ==========================================
+RS ..> AS : логирование
+RS ..> NS : уведомления
+TS ..> RS : проверка существования
+TS ..> AS : логирование
+CMS ..> RS : блокировка требований
+CMS ..> NS : уведомление рецензентов
+CMS ..> AS : логирование
+IES ..> RS : создание требований
+IES ..> TS : создание связей
+IES ..> AS : логирование
+UMS ..> AS : логирование
+
+' ==========================================
+' СВЯЗИ: Сервисы → Репозитории
+' ==========================================
+RS -down-> RR
+TS -down-> TR
+CMS -down-> CR
+NS -down-> NR
+AS -down-> AR
+UMS -down-> UR
+
+' ==========================================
+' СВЯЗИ: Репозитории → БД
+' ==========================================
+RR -down-> DB : libpqxx\n(pqxx::work)
+TR -down-> DB
+AR -down-> DB
+UR -down-> DB
+CR -down-> DB
+NR -down-> DB
+
+' ==========================================
+' ПРИМЕЧАНИЯ
+' ==========================================
+note right of WC
+    **Технологии фронтенда:**
+    Vue.js 3 + Vite
+    Pinia (state management)
+    Bootstrap 5 + Bootstrap Icons
+    Axios (HTTP client)
+    Vue Router
+end note
+
+note right of AG
+    **Middleware (middleware.hpp):**
+    SessionManager — сессии
+    require_auth() — проверка
+    parse_json_body() — парсинг
+    CORS — заголовки
+end note
+
+note bottom of DB
+    **Docker Compose:**
+    db: postgres:16-alpine
+    backend: C++17 (sut_backend)
+    frontend: nginx + Vue SPA
+end note
+
+@enduml

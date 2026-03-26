@@ -1,0 +1,55 @@
+@startuml "Процесс 6: Проверка целостности связей"
+
+title Процесс 6: Проверка целостности связей трассировки
+
+actor "Пользователь" as User
+participant "WebClient" as WC
+participant "ApiGateway" as AG
+participant "TraceabilityService\n(traceability_service.cpp)" as TS
+participant "TraceabilityRepository\n(database.cpp)" as TR
+participant "RequirementsRepository\n(database.cpp)" as RR
+participant "AuditService" as AS
+database "PostgreSQL" as DB
+
+User -> WC : Нажимает\n"Проверка целостности"
+WC -> AG : POST /api/projects/{id}/tracelinks/integrity_check
+AG -> AG : require_auth() → User
+
+AG -> TS : run_full_integrity_check(project_id, user_id)
+
+TS -> TR : get_links_for_project(project_id)
+TR -> DB : SELECT FROM trace_links\nJOIN requirements
+DB --> TR : [TraceLink, ...]
+TR --> TS : links[]
+
+loop Для каждой связи
+    TS -> RR : find_requirement_by_id(link.source_req_id)
+    RR -> DB : SELECT FROM requirements
+    DB --> RR : source_req
+
+    TS -> RR : find_requirement_by_id(link.target_req_id)
+    RR -> DB : SELECT FROM requirements
+    DB --> RR : target_req
+
+    alt Требование удалено или не найдено
+        TS -> TS : issues.add({link, reason:\n"Требование удалено"})
+        TS -> TR : update_trace_link_status(\nlink.id, "NEEDS_REVIEW")
+        TR -> DB : UPDATE trace_links\nSET status = 'NEEDS_REVIEW'
+    else Требование изменено (версия отличается)
+        TS -> TS : issues.add({link, reason:\n"Требование изменено"})
+        TS -> TR : update_trace_link_status(\nlink.id, "NEEDS_REVIEW")
+        TR -> DB : UPDATE trace_links\nSET status = 'NEEDS_REVIEW'
+    else Всё в порядке
+        TS -> TR : update_trace_link_status(\nlink.id, "active")
+        TR -> DB : UPDATE trace_links\nSET status = 'active'
+    end
+end
+
+TS -> AS : log_action("integrity_check",\n"trace_link")
+AS -> DB : INSERT INTO audit_log
+
+TS --> AG : {issues_count, issues[]}
+AG --> WC : JSON результат проверки
+WC --> User : Отображение\nнайденных проблем
+
+@enduml

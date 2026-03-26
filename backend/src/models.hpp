@@ -1,9 +1,9 @@
 /*
 Модуль: models.hpp
-Назначение: Модели данных системы управления требованиями
+Назначение: Структуры данных предметной области СУТ
 Автор: Разработчик
-Дата создания: 21.03.2026
-Требования: Interface.Software.Database.PostgreSQL
+Дата создания: 25.03.2026
+Требования: Архитектура ПО, FR-01, FR-05, FR-11, FR-14, FR-17
 */
 
 #ifndef MODELS_HPP
@@ -51,82 +51,45 @@ struct Requirement {
     std::string status;
     int parent_id = 0;
     int responsible_user_id = 0;
+    std::string responsible_username;
     int version = 1;
     bool is_baseline = false;
     int baseline_id = 0;
     std::string created_at;
     std::string updated_at;
     int created_by = 0;
+    std::string creator_username;
     int updated_by = 0;
     bool is_deleted = false;
     std::string deleted_at;
-
-    std::string responsible_username;
-    std::string creator_username;
-};
-
-const std::vector<std::string> VALID_STATUSES = {
-    "draft", "active", "approved", "implemented",
-    "verified", "deleted", "deprecated"
-};
-const std::vector<std::string> VALID_PRIORITIES = {
-    "critical", "high", "medium", "low"
-};
-const std::vector<std::string> VALID_CATEGORIES = {
-    "functional", "non_functional", "interface",
-    "performance", "security", "derived"
-};
-const std::vector<std::string> VALID_LINK_TYPES = {
-    "derives_from", "satisfies", "verifies", "implements"
-};
-const std::vector<std::string> VALID_ROLES = {
-    "analyst", "reviewer", "admin"
 };
 
 struct RequirementHistory {
     int id = 0;
     int requirement_id = 0;
     int user_id = 0;
+    std::string username;
     std::string event_type;
     std::string attribute_name;
     std::string old_value;
     std::string new_value;
     std::string created_at;
-    std::string username;
 };
 
 struct TraceLink {
     int id = 0;
     int source_req_id = 0;
+    std::string source_system_id;
+    std::string source_title;
     int target_req_id = 0;
+    std::string target_system_id;
+    std::string target_title;
     std::string link_type;
     std::string description;
     std::string status;
     std::string created_at;
     int created_by = 0;
-
-    std::string source_system_id;
-    std::string source_title;
-    std::string target_system_id;
-    std::string target_title;
     std::string creator_username;
-};
-
-struct ChangeRequest {
-    int id = 0;
-    int requirement_id = 0;
-    int requested_by = 0;
-    int assigned_to = 0;
-    std::string status;
-    std::string justification;
-    std::string changes_description;
-    std::string created_at;
-    std::string resolved_at;
-    std::string resolution_comment;
-
-    std::string requirement_system_id;
-    std::string requester_username;
-    std::string assignee_username;
 };
 
 struct Baseline {
@@ -137,6 +100,22 @@ struct Baseline {
     std::string created_at;
     int created_by = 0;
     int requirements_count = 0;
+};
+
+struct ChangeRequest {
+    int id = 0;
+    int requirement_id = 0;
+    std::string requirement_system_id;
+    int requested_by = 0;
+    std::string requester_username;
+    int assigned_to = 0;
+    std::string assignee_username;
+    std::string status;
+    std::string justification;
+    std::string changes_description;
+    std::string created_at;
+    std::string resolved_at;
+    std::string resolution_comment;
 };
 
 struct Notification {
@@ -153,6 +132,7 @@ struct Notification {
 struct AuditLog {
     int id = 0;
     int user_id = 0;
+    std::string username;
     std::string action;
     std::string object_type;
     std::string object_id;
@@ -161,27 +141,35 @@ struct AuditLog {
     std::string context;
     std::string ip_address;
     std::string created_at;
-    std::string username;
 };
 
-template <typename T>
+template<typename T>
 struct Paginated {
     std::vector<T> items;
     int total = 0;
     int pages = 0;
     int page = 1;
-    int per_page = 50;
+    int per_page = 20;
 };
 
-/*
-Назначение: Проверка принадлежности строки списку допустимых значений
-Входные данные: значение, вектор допустимых
-Выходные данные: true если найдено
-*/
-inline bool is_valid(const std::string& val, const std::vector<std::string>& valid)
+static const std::vector<std::string> VALID_ROLES = {
+    "analyst", "reviewer", "admin"};
+static const std::vector<std::string> VALID_STATUSES = {
+    "draft", "active", "approved", "implemented",
+    "verified", "deprecated"};
+static const std::vector<std::string> VALID_PRIORITIES = {
+    "critical", "high", "medium", "low"};
+static const std::vector<std::string> VALID_CATEGORIES = {
+    "functional", "non_functional", "interface",
+    "performance", "security", "derived"};
+static const std::vector<std::string> VALID_LINK_TYPES = {
+    "derives_from", "satisfies", "verifies", "implements"};
+
+template<typename T>
+bool is_valid(const T& val, const std::vector<T>& allowed)
 {
-    for (const auto& v : valid) {
-        if (v == val) return true;
+    for (const auto& item : allowed) {
+        if (item == val) return true;
     }
     return false;
 }
