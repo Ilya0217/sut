@@ -69,6 +69,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { Modal } from 'bootstrap'
 import api from '../api/client'
 
 const emit = defineEmits(['alert'])
@@ -91,8 +92,22 @@ async function createProject() {
         const { data } = await api.post('/projects', newProject)
         newProject.name = ''
         newProject.description = ''
-        bootstrap.Modal.getInstance(document.getElementById('newProjectModal')).hide()
-        router.push(`/projects/${data.id}/requirements`)
+        const modalElement = document.getElementById('newProjectModal')
+        if (!modalElement) {
+            router.push(`/projects/${data.id}/requirements`)
+            return
+        }
+
+        const modal = Modal.getOrCreateInstance(modalElement)
+        modalElement.addEventListener('hidden.bs.modal', () => {
+            document.body.classList.remove('modal-open')
+            document.body.style.removeProperty('padding-right')
+            document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
+                backdrop.remove()
+            })
+            router.push(`/projects/${data.id}/requirements`)
+        }, { once: true })
+        modal.hide()
     } catch (e) {
         emit('alert', e.response?.data?.error || 'Ошибка', 'danger')
     }
