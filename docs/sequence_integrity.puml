@@ -3,53 +3,56 @@
 title Процесс 6: Проверка целостности связей трассировки
 
 actor "Пользователь" as User
-participant "WebClient" as WC
-participant "ApiGateway" as AG
+participant "WebClient\n(TraceLinksView.vue)" as WC
+participant "ApiGateway\n(tracelinks_api.cpp)" as AG
 participant "TraceabilityService\n(traceability_service.cpp)" as TS
-participant "TraceabilityRepository\n(database.cpp)" as TR
-participant "RequirementsRepository\n(database.cpp)" as RR
-participant "AuditService" as AS
-database "PostgreSQL" as DB
+participant "Database\n(database.cpp)" as DB
+participant "AuditService\n(audit_service.cpp)" as AS
 
 User -> WC : Нажимает\n"Проверка целостности"
-WC -> AG : POST /api/projects/{id}/tracelinks/integrity_check
+WC -> AG : POST /api/projects/{id}/\ntracelinks/integrity_check
 AG -> AG : require_auth() → User
+AG -> AG : user.can_run_integrity_check()\n(analyst/admin → OK)
 
-AG -> TS : run_full_integrity_check(project_id, user_id)
+AG -> TS : run_full_integrity_check(\nproject_id, user_id)
 
-TS -> TR : get_links_for_project(project_id)
-TR -> DB : SELECT FROM trace_links\nJOIN requirements
-DB --> TR : [TraceLink, ...]
-TR --> TS : links[]
+TS -> DB : get_links_for_project(project_id)
+DB -> DB : SELECT tl.*, s.system_id,\ns.title, t.system_id, t.title\nFROM trace_links tl\nJOIN requirements s\nJOIN requirements t\nWHERE s.project_id = $1
+DB --> TS : links[]
 
 loop Для каждой связи
-    TS -> RR : find_requirement_by_id(link.source_req_id)
-    RR -> DB : SELECT FROM requirements
-    DB --> RR : source_req
+    TS -> DB : find_requirement_by_id(\nlink.source_req_id)
+    DB --> TS : source_req
 
-    TS -> RR : find_requirement_by_id(link.target_req_id)
-    RR -> DB : SELECT FROM requirements
-    DB --> RR : target_req
+    TS -> DB : find_requirement_by_id(\nlink.target_req_id)
+    DB --> TS : target_req
 
-    alt Требование удалено или не найдено
-        TS -> TS : issues.add({link, reason:\n"Требование удалено"})
-        TS -> TR : update_trace_link_status(\nlink.id, "NEEDS_REVIEW")
-        TR -> DB : UPDATE trace_links\nSET status = 'NEEDS_REVIEW'
-    else Требование изменено (версия отличается)
-        TS -> TS : issues.add({link, reason:\n"Требование изменено"})
-        TS -> TR : update_trace_link_status(\nlink.id, "NEEDS_REVIEW")
-        TR -> DB : UPDATE trace_links\nSET status = 'NEEDS_REVIEW'
+    alt Требование не найдено
+        TS -> TS : issues.push_back(\n{link_id, "Требование не найдено"})
+        TS -> DB : update_trace_link_status(\nlink_id, "NEEDS_REVIEW")
+        DB -> DB : UPDATE trace_links\nSET status='NEEDS_REVIEW'
+    else Требование удалено (is_deleted)
+        TS -> TS : issues.push_back(\n{link_id, "Требование удалено"})
+        TS -> DB : update_trace_link_status(\nlink_id, "NEEDS_REVIEW")
+    else Требование изменено\n(version_at_link ≠ current version)
+        TS -> TS : issues.push_back(\n{link_id, "Требование изменено\nпосле создания связи"})
+        TS -> DB : update_trace_link_status(\nlink_id, "NEEDS_REVIEW")
     else Всё в порядке
-        TS -> TR : update_trace_link_status(\nlink.id, "active")
-        TR -> DB : UPDATE trace_links\nSET status = 'active'
+        TS -> DB : update_trace_link_status(\nlink_id, "active")
+        DB -> DB : UPDATE trace_links\nSET status='active'
     end
 end
 
-TS -> AS : log_action("integrity_check",\n"trace_link")
+TS -> AS : log_action(user_id,\n"integrity_check", "trace_link")
 AS -> DB : INSERT INTO audit_log
 
-TS --> AG : {issues_count, issues[]}
-AG --> WC : JSON результат проверки
-WC --> User : Отображение\nнайденных проблем
+TS --> AG : issues[] (\n{link_id, reason} для каждой)
+AG --> WC : JSON {\nissues_count: N,\nissues: [{link_id, reason}, ...]}
+
+alt issues_count > 0
+    WC --> User : "Найдено проблем: N"\n(badge bg-warning)
+else
+    WC --> User : "Нарушений не обнаружено"\n(badge bg-success)
+end
 
 @enduml

@@ -3,43 +3,59 @@
 title Процесс 2: Создание связи трассировки
 
 actor "Пользователь" as User
-participant "WebClient" as WC
-participant "ApiGateway" as AG
+participant "WebClient\n(TraceLinksView.vue)" as WC
+participant "ApiGateway\n(tracelinks_api.cpp)" as AG
 participant "TraceabilityService\n(traceability_service.cpp)" as TS
-participant "RequirementsService" as RS
-participant "TraceabilityRepository\n(database.cpp)" as TR
-participant "AuditService" as AS
-database "PostgreSQL" as DB
+participant "Database\n(database.cpp)" as DB
+participant "AuditService\n(audit_service.cpp)" as AS
 
-User -> WC : Выбирает исходное\nи целевое требования
-WC -> AG : POST /api/projects/{id}/tracelinks\n{source_req_id, target_req_id, link_type}
+User -> WC : Выбирает исходное\nи целевое требования,\nтип связи
+WC -> AG : POST /api/projects/{id}/tracelinks\n{source_req_id, target_req_id,\nlink_type, description}
 AG -> AG : require_auth() → User
+AG -> AG : user.can_manage_links()\n(analyst/admin → OK)
 
-AG -> TS : create_trace_link(source_id, target_id, type, user_id)
-TS -> RS : find_requirement_by_id(source_id)
-RS -> DB : SELECT FROM requirements
-DB --> RS : Requirement (source)
-RS --> TS : OK
+AG -> TS : create_trace_link(source_id,\ntarget_id, link_type, user_id, desc)
 
-TS -> RS : find_requirement_by_id(target_id)
-RS -> DB : SELECT FROM requirements
-DB --> RS : Requirement (target)
-RS --> TS : OK
+TS -> TS : Проверка: source_id > 0\nи target_id > 0
 
 TS -> TS : Проверка: source ≠ target
-TS -> TR : check_trace_link_exists(source, target, type)
-TR -> DB : SELECT FROM trace_links
-DB --> TR : not found → OK
 
-TS -> TR : create_trace_link()
-TR -> DB : INSERT INTO trace_links
-DB --> TR : TraceLink
+alt source == target
+    TS --> AG : TraceLinkError\n("ERR_SELF_LINK")
+    AG --> WC : 400 {error}
+    WC --> User : Ошибка
+end
 
-TS -> AS : log_action("create", "trace_link")
-AS -> DB : INSERT INTO audit_log
+TS -> DB : find_requirement_by_id(source_id)
+DB -> DB : SELECT FROM requirements\nWHERE id = source_id
+DB --> TS : source requirement
 
-TS --> AG : TraceLink
-AG --> WC : JSON {id, source_req_id, target_req_id, ...}
-WC --> User : Связь отображена\nв таблице
+alt Требование не найдено
+    TS --> AG : TraceLinkError\n("ERR_NOT_FOUND")
+end
+
+TS -> DB : find_requirement_by_id(target_id)
+DB -> DB : SELECT FROM requirements\nWHERE id = target_id
+DB --> TS : target requirement
+
+TS -> DB : check_trace_link_exists(\nsource_id, target_id, link_type)
+DB -> DB : SELECT FROM trace_links\nWHERE source=source_id\nAND target=target_id\nAND link_type=type
+
+alt Связь уже существует
+    TS --> AG : TraceLinkError\n("ERR_DUPLICATE_LINK")
+    AG --> WC : 400 {error}
+else Связь уникальна
+    TS -> DB : create_trace_link(\nsource, target, type, user_id, desc)
+    DB -> DB : INSERT INTO trace_links\nRETURNING id, created_at
+    DB --> TS : TraceLink
+
+    TS -> AS : log_action(user_id, "create",\n"trace_link", link.id)
+    AS -> DB : INSERT INTO audit_log
+
+    TS --> AG : TraceLink
+    AG -> AG : link_to_json(link)
+    AG --> WC : 201 JSON {id, source_req_id,\ntarget_req_id, link_type, status}
+    WC --> User : Связь отображена\nв таблице
+end
 
 @enduml

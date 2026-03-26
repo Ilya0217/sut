@@ -1,0 +1,66 @@
+@startuml "Процесс 3: Импорт требований"
+
+title Процесс 3: Импорт требований из файла
+
+actor "Пользователь" as User
+participant "WebClient\n(RequirementsView.vue)" as WC
+participant "ApiGateway\n(main.cpp:\nhandle_import)" as AG
+participant "ImportExportService\n(import_export_service.cpp)" as IES
+participant "Database\n(database.cpp)" as DB
+participant "AuditService\n(audit_service.cpp)" as AS
+
+User -> WC : Нажимает "Импорт",\nвыбирает файл\n(.json или .csv)
+WC -> AG : POST /api/projects/{id}/import\nContent-Type: multipart/form-data\n(file: <содержимое>)
+
+AG -> AG : require_auth() → User
+AG -> AG : user.can_import_export()\n(analyst/admin → OK)
+
+AG -> AG : Определение формата:\n.json → import_from_json()\n.csv → import_from_csv()
+
+alt JSON формат
+    AG -> IES : import_from_json(\nfile_content, project_id, user_id)
+    IES -> IES : json::parse(content)\nПарсинг массива требований
+
+    loop Для каждого элемента
+        IES -> IES : Валидация:\ntitle, text обязательны
+        IES -> IES : generate_req_id()\n→ "REQ-XXXX"
+        IES -> DB : create_requirement(req_data)
+        DB -> DB : INSERT INTO requirements
+        DB --> IES : Requirement
+
+        IES -> DB : add_requirement_history(\n"import", req_id, user_id)
+        DB -> DB : INSERT INTO\nrequirement_history
+    end
+
+    IES -> AS : log_action(user_id,\n"import", "requirement")
+    AS -> DB : INSERT INTO audit_log
+
+    IES --> AG : JSON {imported_requirements: N}
+
+else CSV формат
+    AG -> IES : import_from_csv(\nfile_content, project_id, user_id)
+    IES -> IES : Построчный парсинг CSV\n(title, text, category,\npriority, status)
+
+    loop Для каждой строки
+        IES -> IES : Валидация полей
+        IES -> IES : generate_req_id()
+        IES -> DB : create_requirement(req_data)
+        DB --> IES : Requirement
+        IES -> DB : add_requirement_history(\n"import", req_id, user_id)
+    end
+
+    IES -> AS : log_action(user_id,\n"import", "requirement")
+    IES --> AG : JSON {imported_requirements: N}
+end
+
+alt Импорт успешен
+    AG --> WC : 200 JSON {imported_requirements: N}
+    WC --> User : "Импортировано: N требований"\n(alert bg-success)
+    WC -> WC : load() — обновление\nсписка требований
+else Ошибка формата
+    IES --> AG : ImportExportError
+    AG --> WC : 400 {error, code}
+    WC --> User : Сообщение об ошибке
+end
+
+@enduml

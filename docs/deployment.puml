@@ -1,0 +1,76 @@
+@startuml "Диаграмма развёртывания СУТ"
+
+skinparam backgroundColor #FEFEFE
+skinparam node {
+    BackgroundColor #D4E6F1
+    BorderColor #2E86C1
+}
+
+title Диаграмма развёртывания СУТ\n(Docker Compose)
+
+actor "Пользователь\n(Браузер)" as User
+
+node "Docker Host" as DH {
+    node "frontend (nginx:alpine)\nПорт: 3000 → 80" as FE {
+        artifact "Vue.js SPA\n(dist/)" as SPA
+        artifact "nginx.conf\n(reverse proxy)" as NGX
+    }
+
+    node "backend (Debian slim)\nПорт: 5123 → 5000" as BE {
+        artifact "sut_backend\n(C++17 binary)" as BIN
+        component "cpp-httplib\n(HTTP server)" as HTTP
+        component "libpqxx 7.8\n(PostgreSQL client)" as PQXX
+        component "OpenSSL\n(PBKDF2 hashing)" as SSL
+    }
+
+    node "db (postgres:16-alpine)\nПорт: 5432" as PGNODE {
+        database "PostgreSQL 16\nБД: sut\nПользователь: sut_user" as PG {
+            storage "users" as T1
+            storage "projects" as T2
+            storage "requirements" as T3
+            storage "requirement_history" as T4
+            storage "trace_links" as T5
+            storage "change_requests" as T6
+            storage "baselines" as T7
+            storage "notifications" as T8
+            storage "audit_log" as T9
+        }
+    }
+
+    FE -[hidden]right- BE
+    BE -[hidden]right- PGNODE
+}
+
+User --> FE : HTTP :3000
+FE --> BE : proxy /api/*\n→ backend:5000
+BE --> PGNODE : libpqxx\nTCP :5432
+
+note bottom of FE
+    **Сборка фронтенда:**
+    1. node:20-alpine → npm install + build
+    2. nginx:alpine → копирование dist/
+    **Конфигурация nginx:**
+    - / → try_files → index.html (SPA)
+    - /api/ → proxy_pass backend:5000
+end note
+
+note bottom of BE
+    **Сборка бэкенда:**
+    1. gcc:13 → CMake + make
+    2. debian:bookworm-slim → копирование бинаря
+    **Зависимости (CMake FetchContent):**
+    - cpp-httplib (header-only)
+    - nlohmann/json (header-only)
+    - libpqxx (system package)
+    - OpenSSL (system package)
+end note
+
+note bottom of PGNODE
+    **Данные:**
+    Volume: pgdata
+    Healthcheck: pg_isready
+    Миграции: run_migrations()
+    (CREATE TABLE IF NOT EXISTS)
+end note
+
+@enduml

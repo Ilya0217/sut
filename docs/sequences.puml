@@ -1,40 +1,54 @@
-@startuml "Диаграммы последовательностей СУТ"
+@startuml "Процесс 1: Создание требования"
 
 title Процесс 1: Создание требования
 
 actor "Пользователь" as User
 participant "WebClient\n(Vue.js)" as WC
-participant "ApiGateway\n(nginx + cpp-httplib)" as AG
-participant "SessionManager" as SM
-participant "UserManagementService\n(user_service.cpp)" as UMS
+participant "ApiGateway\n(nginx → cpp-httplib)" as AG
+participant "middleware.hpp\n(require_auth)" as MW
+participant "SessionManager\n(session_manager.cpp)" as SM
+participant "requirements_api.cpp" as RAPI
 participant "RequirementsService\n(requirement_service.cpp)" as RS
-participant "RequirementsRepository\n(database.cpp)" as RR
+participant "Database\n(database.cpp)" as DB
 participant "AuditService\n(audit_service.cpp)" as AS
-database "PostgreSQL" as DB
 
-User -> WC : Заполняет форму\nтребования
-WC -> AG : POST /api/projects/{id}/requirements\n{title, text, category, priority, status}
-AG -> SM : extract_token(Cookie)
-SM --> AG : user_id
-AG -> UMS : find_user_by_id(user_id)
-UMS -> DB : SELECT FROM users
-DB --> UMS : User
-UMS --> AG : User (авторизация OK)
+User -> WC : Заполняет форму\nRequirementForm.vue
+WC -> AG : POST /api/projects/{id}/requirements\n{title, text, category,\npriority, status, custom_id}
+AG -> MW : require_auth(req, res)
+MW -> SM : extract_token(Cookie header)
+SM --> MW : token
+MW -> SM : get_user_id(token)
+SM --> MW : user_id
+MW -> DB : find_user_by_id(user_id)
+DB --> MW : User
+MW --> RAPI : User (авторизация OK)
 
-AG -> RS : create_requirement(project_id, data, user_id)
-RS -> RR : check_custom_id_exists()
-RR -> DB : SELECT FROM requirements
-DB --> RR : result
-RS -> RS : generate_req_id() → "REQ-XXXX"
-RS -> RR : create_requirement(req)
-RR -> DB : INSERT INTO requirements
-DB --> RR : id, created_at
-RS -> RR : add_requirement_history("create")
-RR -> DB : INSERT INTO requirement_history
-RS -> AS : log_action("create", "requirement")
-AS -> DB : INSERT INTO audit_log
-RS --> AG : Requirement
-AG --> WC : JSON {id, system_id, title, ...}
-WC --> User : Отображение\nсозданного требования
+RAPI -> RAPI : user.can_create()\n(analyst/admin → OK)
+RAPI -> RS : create_requirement(project_id, json_data, user_id)
+
+RS -> RS : Валидация: title, text, category,\npriority, status обязательны
+RS -> DB : check_custom_id_exists()\n(если задан custom_id)
+
+alt custom_id уже существует
+    RS --> RAPI : RequirementError\n("ERR_DUPLICATE_ID")
+    RAPI --> WC : 400 {error, code, field}
+    WC --> User : Сообщение об ошибке
+else OK
+    RS -> RS : generate_req_id()\n→ "REQ-" + 8 hex символов
+    RS -> DB : create_requirement(req_data)
+    DB -> DB : INSERT INTO requirements\nRETURNING id, system_id, created_at
+    DB --> RS : Requirement
+
+    RS -> DB : add_requirement_history(\n"create", req_id, user_id)
+    DB -> DB : INSERT INTO requirement_history
+
+    RS -> AS : log_action(user_id, "create",\n"requirement", req_id)
+    AS -> DB : INSERT INTO audit_log
+
+    RS --> RAPI : Requirement
+    RAPI -> RAPI : requirement_to_json(req)
+    RAPI --> WC : 201 JSON {id, system_id, title, ...}
+    WC --> User : Перенаправление на\nRequirementDetail.vue
+end
 
 @enduml

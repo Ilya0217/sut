@@ -16,105 +16,133 @@ skinparam arrow {
 skinparam defaultFontSize 12
 skinparam packageStyle rectangle
 
-title Архитектура системы управления требованиями (СУТ)\nКомпонентная диаграмма по реализованному коду
+title Архитектура системы управления требованиями (СУТ)\nКомпонентная диаграмма по реализованному коду (C++17)
 
 ' ==========================================
 ' ПРЕЗЕНТАЦИОННЫЙ СЛОЙ
 ' ==========================================
 package "Презентационный слой" as PL #D4E6F1 {
-    component [**WebClient**\n---\nVue.js 3 + Vite\n---\nLoginView | ProjectsView\nRequirementsView | RequirementDetail\nRequirementForm | TraceLinksView\nBaselinesView | ChangeRequestsView\nNotificationsView | AuditView\nUsersView] <<presentation>> as WC
+    component [**WebClient**\n---\nVue.js 3 + Vite\n---\nLoginView | RegisterView\nProjectsView\nRequirementsView | RequirementDetail\nRequirementForm\nTraceLinksView | BaselinesView\nChangeRequestsView\nNotificationsView | AuditView\nUsersView] <<presentation>> as WC
 }
 
 ' ==========================================
 ' СЕРВИСНЫЙ ШЛЮЗ
 ' ==========================================
 package "Сервисный шлюз" as GW #F9E79F {
-    component [**ApiGateway**\n---\nnginx (фронтенд прокси)\n+ cpp-httplib (бэкенд)\n---\nCORS | Маршрутизация\nАутентификация (Cookie/Session)\nRate limiting] <<gateway>> as AG
+    component [**ApiGateway**\n---\nnginx (reverse proxy)\n+ cpp-httplib (HTTP server)\n+ middleware.hpp\n---\nCORS (setup_cors)\nМаршрутизация (register_all_routes)\nАутентификация (require_auth)\nJSON парсинг (parse_json_body)\nОбработка исключений\n(setup_exception_handler)] <<gateway>> as AG
 }
 
 ' ==========================================
 ' СЕРВИСЫ БИЗНЕС-ЛОГИКИ
 ' ==========================================
 package "Сервисы бизнес-логики" as BL #D5F5E3 {
-    component [**RequirementsService**\n---\nrequirement_service.cpp\n---\nСоздание / Редактирование\nУдаление / Восстановление\nВерсионирование\nИерархия требований\nФильтрация и поиск] <<service>> as RS
+    component [**RequirementsService**\n---\nrequirement_service.cpp/.hpp\n---\ncreate_requirement()\nedit_requirement()\nsoft_delete_requirement()\nhard_delete_requirement()\nrestore_requirement()\nВерсионирование (version++)\nИстория изменений\nГенерация system_id (REQ-XXXX)\nВалидация custom_id] <<service>> as RS
 
-    component [**TraceabilityService**\n---\ntraceability_service.cpp\n---\nСоздание связей\nПроверка целостности\nОбнаружение \"подозрительных\"\nИсключение дубликатов] <<service>> as TS
+    component [**TraceabilityService**\n---\ntraceability_service.cpp/.hpp\n---\ncreate_trace_link()\ndelete_trace_link_svc()\ncheck_integrity()\nrun_full_integrity_check()\nПроверка дубликатов\nОбнаружение NEEDS_REVIEW] <<service>> as TS
 
-    component [**ChangeManagementService**\n---\nchange_service.cpp\n---\nЗапросы на изменение\nБазовые версии (Baselines)\nСогласование / Отклонение\nНазначение ответственных] <<service>> as CMS
+    component [**ChangeManagementService**\n---\nchange_service.cpp/.hpp\n---\ncreate_change_request()\napprove_change_request()\nreject_change_request()\ncreate_baseline()\nПроверка is_baseline\nНазначение рецензентов] <<service>> as CMS
 
-    component [**ImportExportService**\n---\nimport_export_service.cpp\n---\nЭкспорт: JSON, CSV\nИмпорт: JSON, CSV\nВалидация данных] <<service>> as IES
+    component [**ImportExportService**\n---\nimport_export_service.cpp/.hpp\n---\nexport_to_json()\nexport_to_csv()\nimport_from_json()\nimport_from_csv()\nВалидация данных] <<service>> as IES
 
-    component [**NotificationService**\n---\nnotification_service.cpp\n---\nУведомления пользователей\nКаналы: UI\nОтслеживание прочитанности] <<service>> as NS
+    component [**NotificationService**\n---\nnotification_service.cpp/.hpp\n---\ncreate_notification()\nget_user_notifications()\nmark_as_read()\nget_unread_count()\nКанал: UI (in-app)] <<service>> as NS
 
-    component [**AuditService**\n---\naudit_service.cpp\n---\nЛогирование действий\nНеизменяемый журнал\nФильтрация по типу/юзеру] <<service>> as AS
+    component [**AuditService**\n---\naudit_service.cpp/.hpp\n---\nlog_action()\nget_audit_logs()\nФильтрация по типу/юзеру\nНеизменяемый журнал] <<service>> as AS
 
-    component [**UserManagementService**\n---\nuser_service.cpp\n---\nРегистрация / Аутентификация\nРолевая модель (admin,\nanalyst, reviewer)\nУправление правами] <<service>> as UMS
+    component [**UserManagementService**\n---\nuser_service.cpp/.hpp\n---\nauthenticate_user()\nregister_user()\nchange_user_role()\nget_all_users()\nPBKDF2-HMAC-SHA256\n(password_utils.cpp)] <<service>> as UMS
+}
+
+' ==========================================
+' API СЛОЙ (маршруты)
+' ==========================================
+package "API обработчики" as API #FCF3CF {
+    component [auth_api.cpp\nprojects_api.cpp\nrequirements_api.cpp\ntracelinks_api.cpp\nchanges_api.cpp\nnotifications_api.cpp\naudit_api.cpp\nusers_api.cpp\nmain.cpp (import/export)] as APIS
 }
 
 ' ==========================================
 ' СЕРВИСЫ ДАННЫХ
 ' ==========================================
-package "Сервисы данных" as DL #FADBD8 {
-    component [**RequirementsRepository**\n---\ndatabase.cpp: users, projects,\nrequirements, requirement_history\n---\nCRUD требований\nОптимизация запросов\nПагинация и поиск] <<repository>> as RR
+package "Сервисы данных (database.cpp)" as DL #FADBD8 {
+    component [**RequirementsRepository**\n---\ncreate_requirement()\nupdate_requirement()\nfind_requirement_by_id()\nget_requirements()\nsearch_requirements()\nadd_requirement_history()\nget_requirement_history()] <<repository>> as RR
 
-    component [**TraceabilityRepository**\n---\ndatabase.cpp: trace_links\n---\nCRUD связей\nГраф связей\nСсылочная целостность] <<repository>> as TR
+    component [**TraceabilityRepository**\n---\ncreate_trace_link()\nfind_trace_link_by_id()\nget_links_for_requirement()\nget_links_for_project()\ncheck_trace_link_exists()\nupdate_trace_link_status()\ndelete_trace_link()] <<repository>> as TR
 
-    component [**AuditRepository**\n---\ndatabase.cpp: audit_log\n---\nЗапись логов\nДолгосрочное хранение\nПоиск по логам] <<repository>> as AR
+    component [**AuditRepository**\n---\nadd_audit_log()\nget_audit_logs()] <<repository>> as AR
 
-    component [**UserRepository**\n---\ndatabase.cpp: users\n---\nCRUD пользователей\nУправление ролями\nХеширование паролей] <<repository>> as UR
+    component [**UserRepository**\n---\ncreate_user()\nfind_user_by_id()\nfind_user_by_username()\nget_all_users()\nupdate_user_role()\nupdate_user_password()] <<repository>> as UR
 
-    component [**ChangeRepository**\n---\ndatabase.cpp: change_requests,\nbaselines\n---\nCRUD запросов на изменение\nУправление базовыми версиями] <<repository>> as CR
+    component [**ChangeRepository**\n---\ncreate_change_request()\nfind_change_request_by_id()\nget_change_requests()\nupdate_change_request_status()\ncreate_baseline()\nget_baselines()] <<repository>> as CR
 
-    component [**NotificationRepository**\n---\ndatabase.cpp: notifications\n---\nCRUD уведомлений\nСчётчик непрочитанных] <<repository>> as NR
+    component [**NotificationRepository**\n---\ncreate_notification()\nget_user_notifications()\nmark_notification_read()\nget_unread_count()] <<repository>> as NR
+
+    component [**ProjectRepository**\n---\ncreate_project()\nfind_project_by_id()\nget_all_projects()] <<repository>> as PR
+}
+
+' ==========================================
+' ИНФРАСТРУКТУРНЫЕ КОМПОНЕНТЫ
+' ==========================================
+package "Инфраструктура" as INFRA #F5EEF8 {
+    component [**SessionManager**\n---\nsession_manager.cpp/.hpp\n---\ncreate_session()\nget_user_id()\nremove_session()\nextract_token()\nOpenSSL RAND (32 bytes)\nstd::unordered_map] as SM
+
+    component [**PasswordUtils**\n---\npassword_utils.cpp/.hpp\n---\nhash_password()\ncheck_password()\nPBKDF2-HMAC-SHA256\n100000 итераций\n16-byte salt] as PU
+
+    component [**Config**\n---\nconfig.hpp\n---\ndatabase_url\nsecret_key\ncors_origin\nport\ndefault_admin_password] as CFG
 }
 
 ' ==========================================
 ' ХРАНИЛИЩЕ
 ' ==========================================
 package "Хранилище" as ST #E8DAEF {
-    database "**PostgreSQL 16**\n---\nusers | projects\nrequirements\nrequirement_history\ntrace_links\nchange_requests\nbaselines\nnotifications\naudit_log" <<storage>> as DB
+    database "**PostgreSQL 16**\n---\nusers | projects\nproject_custom_attributes\nrequirements\nrequirement_history\ntrace_links\nchange_requests\nbaselines | baseline_requirements\nnotifications\naudit_log" <<storage>> as DB
 }
 
 ' ==========================================
 ' СВЯЗИ: Презентация → Шлюз
 ' ==========================================
-WC -down-> AG : HTTP/REST\n(axios + proxy)
+WC -down-> AG : HTTP/REST\n(axios → nginx proxy\n→ cpp-httplib)
 
 ' ==========================================
-' СВЯЗИ: Шлюз → Сервисы (маршрутизация)
+' СВЯЗИ: Шлюз → API → Сервисы
 ' ==========================================
-AG -down-> RS : auth_api.cpp\nrequirements_api.cpp
-AG -down-> TS : tracelinks_api.cpp
-AG -down-> CMS : changes_api.cpp
-AG -down-> IES : main.cpp\n(import/export routes)
-AG -down-> NS : notifications_api.cpp
-AG -down-> AS : audit_api.cpp
-AG -down-> UMS : users_api.cpp\nauth_api.cpp
+AG -down-> APIS : маршрутизация\nregister_*_routes()
+APIS -down-> RS
+APIS -down-> TS
+APIS -down-> CMS
+APIS -down-> IES
+APIS -down-> NS
+APIS -down-> AS
+APIS -down-> UMS
 
 ' ==========================================
 ' СВЯЗИ: Межсервисные
 ' ==========================================
-RS ..> AS : логирование
-RS ..> NS : уведомления
-TS ..> RS : проверка существования
-TS ..> AS : логирование
-CMS ..> RS : блокировка требований
-CMS ..> NS : уведомление рецензентов
-CMS ..> AS : логирование
-IES ..> RS : создание требований
-IES ..> TS : создание связей
-IES ..> AS : логирование
-UMS ..> AS : логирование
+RS ..> AS : log_action()
+TS ..> AS : log_action()
+TS ..> RS : проверка существования\nтребований
+CMS ..> NS : уведомление\nрецензентов
+CMS ..> AS : log_action()
+IES ..> RS : create_requirement()
+IES ..> AS : log_action()
+UMS ..> AS : log_action()
+NS ..> AS : log_action()
 
 ' ==========================================
 ' СВЯЗИ: Сервисы → Репозитории
 ' ==========================================
 RS -down-> RR
+RS -down-> PR
 TS -down-> TR
 CMS -down-> CR
 NS -down-> NR
 AS -down-> AR
 UMS -down-> UR
+
+' ==========================================
+' СВЯЗИ: Инфраструктура
+' ==========================================
+AG ..> SM : require_auth()
+AG ..> PU
+UMS ..> PU : hash_password()\ncheck_password()
+AG ..> CFG
 
 ' ==========================================
 ' СВЯЗИ: Репозитории → БД
@@ -125,32 +153,38 @@ AR -down-> DB
 UR -down-> DB
 CR -down-> DB
 NR -down-> DB
+PR -down-> DB
 
 ' ==========================================
 ' ПРИМЕЧАНИЯ
 ' ==========================================
 note right of WC
     **Технологии фронтенда:**
-    Vue.js 3 + Vite
+    Vue.js 3 + Vite (сборка)
     Pinia (state management)
-    Bootstrap 5 + Bootstrap Icons
+    Vue Router (маршрутизация)
+    Bootstrap 5 + Bootstrap Icons (UI)
     Axios (HTTP client)
-    Vue Router
 end note
 
 note right of AG
     **Middleware (middleware.hpp):**
-    SessionManager — сессии
-    require_auth() — проверка
-    parse_json_body() — парсинг
-    CORS — заголовки
+    require_auth() — аутентификация
+    parse_json_body() — парсинг JSON
+    get_int_param() — query параметры
+    get_str_param() — query параметры
+    requirement_to_json() — сериализация
+    json_response() / json_error()
 end note
 
 note bottom of DB
     **Docker Compose:**
-    db: postgres:16-alpine
-    backend: C++17 (sut_backend)
-    frontend: nginx + Vue SPA
+    db: postgres:16-alpine (порт 5432)
+    backend: C++17 sut_backend (порт 5000)
+    frontend: nginx + Vue SPA (порт 3000)
+    Сборка: CMake + GCC 13
+    Библиотеки: cpp-httplib, nlohmann/json,
+    libpqxx 7.8, OpenSSL
 end note
 
 @enduml

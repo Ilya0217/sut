@@ -4,53 +4,87 @@ title Процесс 4: Процесс изменения требования (
 
 actor "Аналитик" as Analyst
 actor "Рецензент" as Reviewer
-participant "WebClient" as WC
-participant "ApiGateway" as AG
+participant "WebClient\n(ChangeRequestsView.vue)" as WC
+participant "ApiGateway\n(changes_api.cpp)" as AG
 participant "ChangeManagementService\n(change_service.cpp)" as CMS
 participant "NotificationService\n(notification_service.cpp)" as NS
-participant "AuditService" as AS
-database "PostgreSQL" as DB
+participant "AuditService\n(audit_service.cpp)" as AS
+participant "Database\n(database.cpp)" as DB
 
 == Создание запроса на изменение ==
 
-Analyst -> WC : Инициирует запрос\nна изменение
+Analyst -> WC : Инициирует запрос\nна изменение\n(выбирает baseline-требование)
 WC -> AG : POST /api/projects/{id}/change_requests\n{requirement_id, justification,\nchanges_description, assigned_to}
 AG -> AG : require_auth() → Analyst
 
-AG -> CMS : create_change_request(req_id, user_id, ...)
-CMS -> DB : SELECT FROM requirements\nWHERE id = req_id AND is_baseline = true
-DB --> CMS : Requirement (baseline)
+AG -> CMS : create_change_request(\nreq_id, user_id, justification,\nchanges_desc, assigned_to)
 
-CMS -> DB : INSERT INTO change_requests\n(status = 'pending')
+CMS -> DB : find_requirement_by_id(req_id)
+DB --> CMS : Requirement
+
+CMS -> CMS : Проверка:\nreq.is_baseline == true
+
+alt Требование не в baseline
+    CMS --> AG : ChangeError\n("ERR_NOT_BASELINE")
+    AG --> WC : 400 {error}
+    WC --> Analyst : Ошибка
+else Требование в baseline
+    CMS -> DB : create_change_request(\nreq_id, user_id, status="pending",\njustification, changes_desc, assigned_to)
+    DB -> DB : INSERT INTO change_requests\nRETURNING id, created_at
+    DB --> CMS : ChangeRequest
+
+    CMS -> NS : create_notification(\nassigned_to, "change_request_created",\n"Новый запрос на изменение...")
+    NS -> DB : INSERT INTO notifications
+
+    CMS -> AS : log_action(user_id, "create",\n"change_request", cr.id)
+    AS -> DB : INSERT INTO audit_log
+
+    CMS --> AG : ChangeRequest
+    AG --> WC : 201 JSON {id, status: "pending", ...}
+    WC --> Analyst : Запрос создан
+end
+
+== Согласование (Approve) ==
+
+Reviewer -> WC : Просматривает запрос,\nнажимает "Одобрить"
+WC -> AG : POST /api/projects/{id}/\nchange_requests/{cr_id}/approve\n{comment}
+AG -> AG : require_auth() → Reviewer\nuser.can_approve_changes()\n(reviewer/admin → OK)
+
+AG -> CMS : approve_change_request(\ncr_id, user_id, comment)
+CMS -> DB : find_change_request_by_id(cr_id)
+DB --> CMS : ChangeRequest (status = "pending")
+
+alt Статус не "pending"
+    CMS --> AG : ChangeError\n("ERR_ALREADY_RESOLVED")
+else
+    CMS -> DB : update_change_request_status(\ncr_id, "approved",\nresolved_at=NOW(), comment)
+    DB -> DB : UPDATE change_requests\nSET status='approved',\nresolved_at=NOW(),\nresolution_comment=$1
+
+    CMS -> AS : log_action(user_id, "approve",\n"change_request", cr_id)
+    AS -> DB : INSERT INTO audit_log
+
+    CMS --> AG : ChangeRequest (approved)
+    AG --> WC : JSON {status: "approved", ...}
+    WC --> Reviewer : Запрос одобрен
+end
+
+== Отклонение (Reject) ==
+
+Reviewer -> WC : Нажимает "Отклонить"
+WC -> AG : POST /api/projects/{id}/\nchange_requests/{cr_id}/reject\n{comment}
+AG -> AG : require_auth() → Reviewer
+
+AG -> CMS : reject_change_request(\ncr_id, user_id, comment)
+CMS -> DB : find_change_request_by_id(cr_id)
 DB --> CMS : ChangeRequest
 
-CMS -> NS : create_notification(assigned_to,\n"change_request_created")
-NS -> DB : INSERT INTO notifications
+CMS -> DB : update_change_request_status(\ncr_id, "rejected", comment)
 
-CMS -> AS : log_action("create", "change_request")
+CMS -> AS : log_action(user_id, "reject",\n"change_request", cr_id)
 AS -> DB : INSERT INTO audit_log
 
-CMS --> AG : ChangeRequest
-AG --> WC : JSON {id, status: "pending", ...}
-WC --> Analyst : Запрос создан
-
-== Согласование ==
-
-Reviewer -> WC : Просматривает запрос
-WC -> AG : POST /api/projects/{id}/change_requests/{cr_id}/approve\n{comment}
-AG -> AG : require_auth() → Reviewer\n(проверка роли: reviewer/admin)
-
-AG -> CMS : approve_change_request(cr_id, user_id, comment)
-CMS -> DB : SELECT FROM change_requests\nWHERE id = cr_id
-DB --> CMS : ChangeRequest (status = 'pending')
-
-CMS -> DB : UPDATE change_requests\nSET status = 'approved',\nresolved_at = NOW()
-
-CMS -> AS : log_action("approve", "change_request")
-AS -> DB : INSERT INTO audit_log
-
-CMS --> AG : ChangeRequest (approved)
-AG --> WC : JSON {status: "approved", ...}
-WC --> Reviewer : Запрос одобрен
+CMS --> AG : ChangeRequest (rejected)
+AG --> WC : JSON {status: "rejected", ...}
+WC --> Reviewer : Запрос отклонён
 
 @enduml
