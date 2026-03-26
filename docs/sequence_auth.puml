@@ -3,60 +3,97 @@
 title Процесс 5: Аутентификация и авторизация
 
 actor "Пользователь" as User
-participant "WebClient" as WC
-participant "ApiGateway\n(middleware.hpp)" as AG
+participant "WebClient\n(LoginView.vue)" as WC
+participant "Pinia Store\n(auth.js)" as Store
+participant "ApiGateway\n(nginx → cpp-httplib)" as AG
+participant "auth_api.cpp" as AAPI
 participant "SessionManager\n(session_manager.cpp)" as SM
 participant "UserManagementService\n(user_service.cpp)" as UMS
-participant "UserRepository\n(database.cpp)" as UR
+participant "PasswordUtils\n(password_utils.cpp)" as PU
+participant "Database\n(database.cpp)" as DB
 participant "AuditService" as AS
-database "PostgreSQL" as DB
 
 == Аутентификация (вход) ==
 
 User -> WC : Вводит логин/пароль
-WC -> AG : POST /api/auth/login\n{username, password}
+WC -> Store : login(username, password)
+Store -> AG : POST /api/auth/login\n{username, password}
 
-AG -> UMS : authenticate_user(username, password)
-UMS -> UR : find_user_by_username(username)
-UR -> DB : SELECT FROM users\nWHERE username = $1
-DB --> UR : User (с password_hash)
-UR --> UMS : User
+AG -> AAPI : handle_login(req, res)
+AAPI -> AAPI : Валидация:\nusername и password не пусты
 
-UMS -> UMS : check_password(password, hash)\nPBKDF2-HMAC-SHA256\n100000 итераций
-UMS --> AG : User (аутентифицирован)
+AAPI -> UMS : authenticate_user(username, password)
+UMS -> DB : find_user_by_username(username)
+DB -> DB : SELECT id, username, email,\npassword_hash, role FROM users\nWHERE username = $1
+DB --> UMS : User (с password_hash)
 
-AG -> SM : create_session(user.id)
-SM -> SM : generate_session_token()\n(32 байт, OpenSSL RAND)
-SM --> AG : token
+UMS -> PU : check_password(password, hash)
+PU -> PU : Извлечение salt из hash\nPBKDF2-HMAC-SHA256\n100000 итераций
+PU --> UMS : true/false
 
-AG -> AG : Set-Cookie: session=<token>;\nPath=/; HttpOnly; SameSite=Lax
-AG --> WC : JSON {id, username, role}\n+ Set-Cookie
-WC -> WC : Сохранение user в Pinia store
-WC --> User : Перенаправление\nна главную страницу
+alt Пароль верный
+    UMS --> AAPI : User
+    AAPI -> SM : create_session(user.id)
+    SM -> SM : RAND_bytes(32) →\ntoken (hex string)
+    SM -> SM : sessions_[token] = user_id
+    SM --> AAPI : token
 
-== Авторизация (проверка прав) ==
+    AAPI -> AAPI : Set-Cookie: session=<token>;\nPath=/; HttpOnly; SameSite=Lax
+    AAPI -> AS : log_action(user_id,\n"login", "auth")
+    AS -> DB : INSERT INTO audit_log
+    AAPI --> Store : JSON {id, username,\nemail, role} + Set-Cookie
 
-User -> WC : Действие (например,\nсоздать требование)
+    Store -> Store : user.value = data
+    Store --> WC : OK
+    WC --> User : router.push('/')\n→ ProjectsView
+
+else Пароль неверный
+    UMS --> AAPI : nullopt
+    AAPI --> Store : 401 {error:\n"Неверное имя\nпользователя или пароль"}
+    Store --> WC : throw error
+    WC --> User : Сообщение об ошибке
+end
+
+== Авторизация (проверка прав при запросе) ==
+
+User -> WC : Действие (создать требование)
 WC -> AG : POST /api/projects/{id}/requirements\nCookie: session=<token>
 
+AG -> AG : require_auth(req, res)
 AG -> SM : extract_token(Cookie header)
+note right of SM
+    Парсинг "session=<token>"
+    из Cookie заголовка
+end note
 SM --> AG : token
 
 AG -> SM : get_user_id(token)
-SM --> AG : user_id
+SM --> AG : user_id (из sessions_)
 
-AG -> UR : find_user_by_id(user_id)
-UR -> DB : SELECT FROM users
-DB --> UR : User
-UR --> AG : User
+AG -> DB : find_user_by_id(user_id)
+DB --> AG : User {role: "analyst"}
 
-AG -> AG : user.can_create()\n(проверка роли:\nanalyst, admin → OK\nreviewer → 403)
+AG -> AG : user.can_create()\nanalyst → true\nreviewer → false
 
-alt Права достаточны
-    AG -> AG : Передача в обработчик
+alt Роль разрешает действие
+    AG -> AG : Передача в обработчик\nrequirements_api.cpp
 else Недостаточно прав
-    AG --> WC : 403 {error: "Недостаточно прав"}
+    AG --> WC : 403 {error:\n"Недостаточно прав"}
     WC --> User : Сообщение об ошибке
 end
+
+== Выход ==
+
+User -> WC : Нажимает "Выйти"
+WC -> Store : logout()
+Store -> AG : POST /api/auth/logout\nCookie: session=<token>
+AG -> SM : extract_token() → token
+AG -> SM : remove_session(token)
+SM -> SM : sessions_.erase(token)
+AG -> AS : log_action("logout", "auth")
+AG --> Store : {message: "OK"}\n+ Set-Cookie: session=;\nExpires=past
+Store -> Store : user.value = null
+Store --> WC : OK
+WC --> User : router.push('/login')
 
 @enduml

@@ -1,0 +1,340 @@
+@startuml "Диаграмма классов/модулей C++ бэкенда"
+
+skinparam backgroundColor #FEFEFE
+skinparam class {
+    BackgroundColor #D5F5E3
+    BorderColor #27AE60
+}
+skinparam packageStyle rectangle
+
+title Структура классов и модулей C++ бэкенда СУТ
+
+' ==========================================
+' МОДЕЛИ ДАННЫХ (models.hpp)
+' ==========================================
+package "models.hpp" as MOD #FADBD8 {
+    class User {
+        +id : int
+        +username : string
+        +email : string
+        +password_hash : string
+        +role : string
+        +created_at : string
+        --
+        +can_create() : bool
+        +can_edit() : bool
+        +can_delete() : bool
+        +can_manage_links() : bool
+        +can_approve_changes() : bool
+        +can_manage_users() : bool
+        +can_import_export() : bool
+        +can_run_integrity_check() : bool
+    }
+
+    class Project {
+        +id : int
+        +name : string
+        +description : string
+        +created_at : string
+        +created_by : int
+    }
+
+    class Requirement {
+        +id : int
+        +system_id : string
+        +custom_id : string
+        +project_id : int
+        +title : string
+        +text : string
+        +category : string
+        +priority : string
+        +status : string
+        +parent_id : int
+        +responsible_user_id : int
+        +responsible_username : string
+        +creator_username : string
+        +version : int
+        +is_baseline : bool
+        +is_deleted : bool
+        +created_at : string
+        +updated_at : string
+    }
+
+    class TraceLink {
+        +id : int
+        +source_req_id : int
+        +target_req_id : int
+        +link_type : string
+        +description : string
+        +status : string
+        +created_by : int
+        +created_at : string
+        +source_system_id : string
+        +source_title : string
+        +target_system_id : string
+        +target_title : string
+        +creator_username : string
+    }
+
+    class ChangeRequest {
+        +id : int
+        +requirement_id : int
+        +status : string
+        +justification : string
+        +changes_description : string
+        +created_at : string
+        +resolved_at : string
+        +resolution_comment : string
+        +requirement_system_id : string
+        +requester_username : string
+        +assignee_username : string
+        +requested_by : int
+        +assigned_to : int
+    }
+
+    class Baseline {
+        +id : int
+        +name : string
+        +description : string
+        +project_id : int
+        +created_at : string
+        +requirements_count : int
+    }
+
+    class Notification {
+        +id : int
+        +user_id : int
+        +event_type : string
+        +message : string
+        +is_read : bool
+        +related_object_type : string
+        +related_object_id : int
+        +created_at : string
+    }
+
+    class AuditLog {
+        +id : int
+        +user_id : int
+        +username : string
+        +action : string
+        +object_type : string
+        +object_id : int
+        +old_value : string
+        +new_value : string
+        +context : string
+        +ip_address : string
+        +created_at : string
+    }
+
+    class RequirementHistory {
+        +id : int
+        +requirement_id : int
+        +user_id : int
+        +event_type : string
+        +attribute_name : string
+        +old_value : string
+        +new_value : string
+        +created_at : string
+        +username : string
+    }
+
+    class PaginatedResult<T> {
+        +items : vector<T>
+        +total : int
+        +page : int
+        +pages : int
+    }
+}
+
+' ==========================================
+' БАЗА ДАННЫХ (database.hpp/cpp)
+' ==========================================
+package "database.hpp/.cpp" as DBP #D4E6F1 {
+    class Database <<Singleton>> {
+        -conn_ : unique_ptr<pqxx::connection>
+        -mutex_ : recursive_mutex
+        --
+        +{static} instance() : Database&
+        +initialize(db_url : string)
+        +run_migrations()
+        __Пользователи__
+        +create_user(...) : User
+        +find_user_by_id(id) : optional<User>
+        +find_user_by_username(name) : optional<User>
+        +get_all_users() : vector<User>
+        +update_user_role(id, role)
+        +update_user_password(id, hash)
+        __Проекты__
+        +create_project(...) : Project
+        +find_project_by_id(id) : optional<Project>
+        +get_all_projects() : vector<Project>
+        __Требования__
+        +create_requirement(...) : Requirement
+        +update_requirement(...)
+        +find_requirement_by_id(id) : optional<Requirement>
+        +get_requirements(...) : PaginatedResult
+        +search_requirements(...) : PaginatedResult
+        +add_requirement_history(...)
+        +get_requirement_history(...) : PaginatedResult
+        __Связи__
+        +create_trace_link(...) : TraceLink
+        +find_trace_link_by_id(id) : optional<TraceLink>
+        +get_links_for_requirement(id) : vector<TraceLink>
+        +get_links_for_project(id) : vector<TraceLink>
+        +check_trace_link_exists(...) : bool
+        +update_trace_link_status(id, status)
+        +delete_trace_link(id)
+        __Изменения/Baselines__
+        +create_baseline(...) : Baseline
+        +get_baselines(pid) : vector<Baseline>
+        +create_change_request(...) : ChangeRequest
+        +find_change_request_by_id(id) : optional<ChangeRequest>
+        +get_change_requests(...) : PaginatedResult
+        +update_change_request_status(...)
+        __Уведомления__
+        +create_notification(...)
+        +get_user_notifications(...) : PaginatedResult
+        +mark_notification_read(id)
+        +get_unread_count(uid) : int
+        __Аудит__
+        +add_audit_log(...)
+        +get_audit_logs(...) : PaginatedResult
+    }
+}
+
+' ==========================================
+' ИНФРАСТРУКТУРА
+' ==========================================
+package "Инфраструктура" as INF #F5EEF8 {
+    class SessionManager <<Singleton>> {
+        -sessions_ : unordered_map<string, int>
+        -mutex_ : mutex
+        --
+        +{static} instance() : SessionManager&
+        +create_session(user_id) : string
+        +get_user_id(token) : optional<int>
+        +remove_session(token)
+        +extract_token(cookie_header) : string
+    }
+
+    class PasswordUtils <<module>> {
+        +hash_password(password) : string
+        +check_password(password, hash) : bool
+        -generate_salt(length) : vector<uint8_t>
+    }
+
+    class Config {
+        +database_url : string
+        +secret_key : string
+        +cors_origin : string
+        +port : int
+        +default_admin_password : string
+        --
+        +{static} from_env() : Config
+    }
+}
+
+' ==========================================
+' СЕРВИСЫ
+' ==========================================
+package "Сервисы бизнес-логики" as SVC #D5F5E3 {
+    class RequirementsService <<module>> {
+        +create_requirement(pid, data, uid) : Requirement
+        +edit_requirement(rid, data, uid) : Requirement
+        +soft_delete_requirement(rid, uid)
+        +hard_delete_requirement(rid, uid)
+        +restore_requirement(rid, uid) : Requirement
+    }
+
+    class TraceabilityService <<module>> {
+        +create_trace_link(...) : TraceLink
+        +delete_trace_link_svc(lid, uid)
+        +check_integrity(rid, uid)
+        +run_full_integrity_check(pid, uid) : vector<json>
+    }
+
+    class ChangeService <<module>> {
+        +create_change_request(...) : ChangeRequest
+        +approve_change_request(crid, uid, comment)
+        +reject_change_request(crid, uid, comment)
+        +create_baseline(pid, name, req_ids, uid, desc) : Baseline
+    }
+
+    class ImportExportService <<module>> {
+        +export_to_json(pid, uid) : string
+        +export_to_csv(pid, uid) : string
+        +import_from_json(content, pid, uid) : json
+        +import_from_csv(content, pid, uid) : json
+    }
+
+    class NotificationService <<module>> {
+        +create_notification(uid, event, msg, type, oid)
+        +get_user_notifications(uid, ...) : PaginatedResult
+        +mark_as_read(nid, uid)
+        +get_unread_count(uid) : int
+    }
+
+    class AuditService <<module>> {
+        +log_action(uid, action, type, oid, ...)
+        +get_audit_logs(...) : PaginatedResult
+    }
+
+    class UserService <<module>> {
+        +authenticate_user(name, pass) : optional<User>
+        +register_user(name, email, pass, role) : User
+        +change_user_role(uid, role, actor) : User
+        +get_all_users() : vector<User>
+    }
+}
+
+' ==========================================
+' ИСКЛЮЧЕНИЯ
+' ==========================================
+package "Исключения" as EXC #FCF3CF {
+    class RequirementError {
+        +code : string
+        +field : string
+    }
+    class TraceLinkError {
+        +code : string
+    }
+    class ChangeError {
+        +code : string
+    }
+    class ImportExportError {
+        +code : string
+    }
+    class UserError {
+        +code : string
+    }
+}
+
+RequirementError --|> std.runtime_error
+TraceLinkError --|> std.runtime_error
+ChangeError --|> std.runtime_error
+ImportExportError --|> std.runtime_error
+UserError --|> std.runtime_error
+
+' ==========================================
+' ЗАВИСИМОСТИ
+' ==========================================
+RequirementsService --> Database : использует
+TraceabilityService --> Database : использует
+ChangeService --> Database : использует
+ImportExportService --> Database : использует
+NotificationService --> Database : использует
+AuditService --> Database : использует
+UserService --> Database : использует
+UserService --> PasswordUtils : hash/check
+
+RequirementsService ..> AuditService : log_action
+TraceabilityService ..> AuditService : log_action
+ChangeService ..> AuditService : log_action
+ChangeService ..> NotificationService : notify
+
+Database --> User : возвращает
+Database --> Requirement : возвращает
+Database --> TraceLink : возвращает
+Database --> ChangeRequest : возвращает
+
+@enduml

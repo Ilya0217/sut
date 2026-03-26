@@ -1,0 +1,93 @@
+@startuml "Блок-схема потоков данных СУТ"
+
+skinparam backgroundColor #FEFEFE
+skinparam activity {
+    BackgroundColor #D5F5E3
+    BorderColor #27AE60
+    ArrowColor #555555
+}
+skinparam activityDiamond {
+    BackgroundColor #F9E79F
+}
+
+title Блок-схема обработки запросов СУТ\n(общий поток данных)
+
+start
+
+:HTTP запрос от **WebClient**\n(Vue.js → axios → nginx);
+
+:nginx проксирует\n/api/* → backend:5000;
+
+:**ApiGateway** (cpp-httplib)\nsetup_cors() — CORS заголовки;
+
+if (OPTIONS запрос?) then (да)
+    :Ответ 204 No Content;
+    stop
+else (нет)
+endif
+
+:Маршрутизация запроса\nregister_all_routes();
+
+if (Требуется аутентификация?) then (да)
+    :require_auth()\nextract_token(Cookie);
+
+    if (Сессия валидна?) then (да)
+        :SessionManager.get_user_id(token);
+        :Database.find_user_by_id();
+    else (нет)
+        :Ответ 401\n"Требуется аутентификация";
+        stop
+    endif
+
+    if (Достаточно прав?) then (да)
+        :Передача в обработчик;
+    else (нет)
+        :Ответ 403\n"Недостаточно прав";
+        stop
+    endif
+else (нет\n(/api/health, /api/auth/login))
+endif
+
+partition "Сервис бизнес-логики" {
+    switch (Тип операции)
+    case (Требования)
+        :RequirementsService\ncreate / edit / delete\nrestore / search;
+    case (Связи)
+        :TraceabilityService\ncreate_link / delete_link\ncheck_integrity;
+    case (Изменения)
+        :ChangeManagementService\ncreate_cr / approve / reject\ncreate_baseline;
+    case (Импорт/Экспорт)
+        :ImportExportService\nimport_from_json/csv\nexport_to_json/csv;
+    case (Уведомления)
+        :NotificationService\nlist / mark_read\nunread_count;
+    case (Пользователи)
+        :UserManagementService\nauthenticate / register\nchange_role;
+    case (Аудит)
+        :AuditService\nget_audit_logs;
+    endswitch
+}
+
+partition "Сервис данных (database.cpp)" {
+    :Database — Singleton\nstd::recursive_mutex lock;
+
+    :pqxx::work txn(*conn_)\nSQL запрос;
+
+    :PostgreSQL 16\n(Docker: sut-db-1);
+
+    :txn.commit()\nВозврат результата;
+}
+
+:AuditService.log_action()\n→ INSERT INTO audit_log;
+
+if (Есть уведомления?) then (да)
+    :NotificationService\n.create_notification()\n→ INSERT INTO notifications;
+else (нет)
+endif
+
+:json_response(res, data, status)\nContent-Type: application/json;
+
+:nginx → WebClient\n(Vue.js обновляет UI);
+
+stop
+
+@enduml
