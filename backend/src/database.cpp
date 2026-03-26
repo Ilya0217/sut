@@ -130,6 +130,53 @@ void Database::run_migrations()
             created_at TIMESTAMP DEFAULT NOW()
         );
     )SQL");
+
+    txn.exec(R"SQL(
+        ALTER TABLE users
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE projects
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE requirements
+            ALTER COLUMN created_at SET DEFAULT NOW(),
+            ALTER COLUMN updated_at SET DEFAULT NOW();
+        ALTER TABLE requirement_history
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE trace_links
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE change_requests
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE notifications
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE audit_log
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        ALTER TABLE baselines
+            ALTER COLUMN created_at SET DEFAULT NOW();
+        UPDATE projects SET created_at = NOW()
+            WHERE created_at IS NULL;
+        UPDATE requirements SET created_at = NOW()
+            WHERE created_at IS NULL;
+        UPDATE requirements SET updated_at = NOW()
+            WHERE updated_at IS NULL;
+        UPDATE requirements SET is_deleted = false
+            WHERE is_deleted IS NULL;
+        UPDATE requirements SET is_baseline = false
+            WHERE is_baseline IS NULL;
+        ALTER TABLE requirements
+            ALTER COLUMN is_deleted SET DEFAULT false;
+        ALTER TABLE requirements
+            ALTER COLUMN is_baseline SET DEFAULT false;
+        UPDATE trace_links SET status = 'active'
+            WHERE status IS NULL;
+        UPDATE trace_links SET created_at = NOW()
+            WHERE created_at IS NULL;
+        ALTER TABLE trace_links
+            ALTER COLUMN status SET DEFAULT 'active';
+        UPDATE change_requests SET status = 'pending'
+            WHERE status IS NULL;
+        ALTER TABLE change_requests
+            ALTER COLUMN status SET DEFAULT 'pending';
+    )SQL");
+
     txn.commit();
 }
 
@@ -167,10 +214,10 @@ static User row_to_user(const pqxx::row& r)
 {
     User u;
     u.id = r[0].as<int>();
-    u.username = r[1].as<std::string>();
-    u.email = r[2].as<std::string>();
+    u.username = safe_str(r, 1);
+    u.email = safe_str(r, 2);
     u.password_hash = safe_str(r, 3);
-    u.role = r[4].as<std::string>();
+    u.role = safe_str(r, 4);
     u.is_active_user = safe_bool(r, 5);
     u.created_at = safe_str(r, 6);
     return u;
@@ -209,8 +256,8 @@ User Database::create_user(const std::string& username,
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     pqxx::work txn(*conn_);
     auto r = txn.exec_params(
-        "INSERT INTO users(username,email,password_hash,role) "
-        "VALUES($1,$2,$3,$4) "
+        "INSERT INTO users(username,email,password_hash,role,created_at) "
+        "VALUES($1,$2,$3,$4,NOW()) "
         "RETURNING id,username,email,password_hash,role,"
         "is_active_user,created_at::text",
         username, email, password_hash, role);
@@ -261,8 +308,8 @@ Project Database::create_project(const std::string& name,
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     pqxx::work txn(*conn_);
     auto r = txn.exec_params(
-        "INSERT INTO projects(name,description,created_by) "
-        "VALUES($1,$2,$3) RETURNING id,created_at::text",
+        "INSERT INTO projects(name,description,created_by,created_at) "
+        "VALUES($1,$2,$3,NOW()) RETURNING id,created_at::text",
         name, desc, user_id);
     txn.commit();
     Project p;
@@ -287,7 +334,7 @@ std::optional<Project> Database::find_project_by_id(int id)
     p.id = r[0][0].as<int>();
     p.name = r[0][1].as<std::string>();
     p.description = safe_str(r[0], 2);
-    p.created_at = r[0][3].as<std::string>();
+    p.created_at = safe_str(r[0], 3);
     p.created_by = r[0][4].as<int>();
     return p;
 }
@@ -306,7 +353,7 @@ std::vector<Project> Database::get_all_projects()
         p.id = r[0].as<int>();
         p.name = r[1].as<std::string>();
         p.description = safe_str(r, 2);
-        p.created_at = r[3].as<std::string>();
+        p.created_at = safe_str(r, 3);
         p.created_by = r[4].as<int>();
         result.push_back(p);
     }
@@ -319,14 +366,14 @@ Requirement Database::row_to_requirement(const pqxx::row& r)
 {
     Requirement req;
     req.id = r["id"].as<int>();
-    req.system_id = r["system_id"].as<std::string>();
+    req.system_id = safe_str(r, r.column_number("system_id"));
     req.custom_id = safe_str(r, r.column_number("custom_id"));
     req.project_id = r["project_id"].as<int>();
-    req.title = r["title"].as<std::string>();
-    req.text = r["text"].as<std::string>();
-    req.category = r["category"].as<std::string>();
-    req.priority = r["priority"].as<std::string>();
-    req.status = r["status"].as<std::string>();
+    req.title = safe_str(r, r.column_number("title"));
+    req.text = safe_str(r, r.column_number("text"));
+    req.category = safe_str(r, r.column_number("category"));
+    req.priority = safe_str(r, r.column_number("priority"));
+    req.status = safe_str(r, r.column_number("status"));
     req.parent_id = safe_int(r, r.column_number("parent_id"));
     req.responsible_user_id = safe_int(r,
         r.column_number("responsible_user_id"));
@@ -359,7 +406,8 @@ Requirement Database::create_requirement(const Requirement& req)
         "INSERT INTO requirements"
         "(system_id,custom_id,project_id,title,text,category,"
         "priority,status,parent_id,responsible_user_id,version,"
-        "created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) "
+        "created_by,created_at,updated_at,is_deleted,is_baseline) "
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW(),false,false) "
         "RETURNING id",
         req.system_id,
         req.custom_id.empty() ? std::optional<std::string>{}
@@ -436,9 +484,9 @@ Paginated<Requirement> Database::list_requirements(
     pqxx::work txn(*conn_);
 
     std::string base_where = "WHERE r.project_id=" +
-        txn.quote(project_id);
+        std::to_string(project_id);
     if (!include_deleted) {
-        base_where += " AND r.is_deleted=false";
+        base_where += " AND COALESCE(r.is_deleted,false)=false";
     }
     if (!status.empty()) {
         base_where += " AND r.status=" + txn.quote(status);
@@ -465,8 +513,8 @@ Paginated<Requirement> Database::list_requirements(
     auto rows = txn.exec(
         std::string(REQ_SELECT) + base_where +
         " ORDER BY r." + allowed_sort + " " + order +
-        " LIMIT " + txn.quote(per_page) +
-        " OFFSET " + txn.quote(offset));
+        " LIMIT " + std::to_string(per_page) +
+        " OFFSET " + std::to_string(offset));
     txn.commit();
 
     Paginated<Requirement> result;
@@ -546,7 +594,7 @@ void Database::add_requirement_history(int req_id, int user_id,
     txn.exec_params(
         "INSERT INTO requirement_history"
         "(requirement_id,user_id,event_type,attribute_name,"
-        "old_value,new_value) VALUES($1,$2,$3,$4,$5,$6)",
+        "old_value,new_value,created_at) VALUES($1,$2,$3,$4,$5,$6,NOW())",
         req_id, user_id, event_type,
         attr_name.empty() ? std::optional<std::string>{}
                           : attr_name,
@@ -595,8 +643,8 @@ Paginated<RequirementHistory> Database::get_requirement_history(
         h.attribute_name = safe_str(r, 4);
         h.old_value = safe_str(r, 5);
         h.new_value = safe_str(r, 6);
-        h.created_at = r[7].as<std::string>();
-        h.username = r[8].as<std::string>();
+        h.created_at = safe_str(r, 7);
+        h.username = safe_str(r, 8);
         result.items.push_back(h);
     }
     return result;
@@ -620,9 +668,9 @@ TraceLink Database::row_to_trace_link(const pqxx::row& r)
     lnk.id = r["id"].as<int>();
     lnk.source_req_id = r["source_req_id"].as<int>();
     lnk.target_req_id = r["target_req_id"].as<int>();
-    lnk.link_type = r["link_type"].as<std::string>();
+    lnk.link_type = safe_str(r, r.column_number("link_type"));
     lnk.description = safe_str(r, r.column_number("description"));
-    lnk.status = r["status"].as<std::string>();
+    lnk.status = safe_str(r, r.column_number("status"));
     lnk.created_at = safe_str(r, r.column_number("lcat"));
     lnk.created_by = safe_int(r, r.column_number("created_by"));
     lnk.source_system_id = safe_str(r,
@@ -656,8 +704,8 @@ TraceLink Database::create_trace_link(int source_id, int target_id,
     pqxx::work txn(*conn_);
     auto r = txn.exec_params(
         "INSERT INTO trace_links"
-        "(source_req_id,target_req_id,link_type,description,created_by)"
-        " VALUES($1,$2,$3,$4,$5) RETURNING id",
+        "(source_req_id,target_req_id,link_type,description,created_by,created_at,status)"
+        " VALUES($1,$2,$3,$4,$5,NOW(),'active') RETURNING id",
         source_id, target_id, link_type, description, user_id);
     int new_id = r[0][0].as<int>();
     auto row = txn.exec_params(
@@ -750,8 +798,8 @@ Baseline Database::create_baseline(int project_id,
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     pqxx::work txn(*conn_);
     auto r = txn.exec_params(
-        "INSERT INTO baselines(project_id,name,description,created_by)"
-        " VALUES($1,$2,$3,$4) RETURNING id,created_at::text",
+        "INSERT INTO baselines(project_id,name,description,created_by,created_at)"
+        " VALUES($1,$2,$3,$4,NOW()) RETURNING id,created_at::text",
         project_id, name, description, user_id);
     int bl_id = r[0][0].as<int>();
     std::string bl_created = r[0][1].as<std::string>();
@@ -790,10 +838,10 @@ std::vector<Baseline> Database::get_baselines(int project_id)
     for (const auto& r : rows) {
         Baseline bl;
         bl.id = r[0].as<int>();
-        bl.name = r[1].as<std::string>();
+        bl.name = safe_str(r, 1);
         bl.project_id = r[2].as<int>();
         bl.description = safe_str(r, 3);
-        bl.created_at = r[4].as<std::string>();
+        bl.created_at = safe_str(r, 4);
         bl.created_by = r[5].as<int>();
         bl.requirements_count = r[6].as<int>();
         result.push_back(bl);
@@ -812,8 +860,8 @@ ChangeRequest Database::create_change_request(int req_id,
     auto r = txn.exec_params(
         "INSERT INTO change_requests"
         "(requirement_id,requested_by,assigned_to,"
-        "justification,changes_description) "
-        "VALUES($1,$2,$3,$4,$5) RETURNING id,created_at::text",
+        "justification,changes_description,created_at,status) "
+        "VALUES($1,$2,$3,$4,$5,NOW(),'pending') RETURNING id,created_at::text",
         req_id, user_id, nullable_int(assigned_to),
         justification, changes_desc);
     int cr_id = r[0][0].as<int>();
@@ -830,7 +878,7 @@ Paginated<ChangeRequest> Database::get_change_requests(
     pqxx::work txn(*conn_);
 
     std::string where = "WHERE req.project_id=" +
-        txn.quote(project_id);
+        std::to_string(project_id);
     if (!status.empty()) {
         where += " AND cr.status=" + txn.quote(status);
     }
@@ -857,8 +905,8 @@ Paginated<ChangeRequest> Database::get_change_requests(
         "LEFT JOIN users u2 ON u2.id=cr.assigned_to "
         + where +
         " ORDER BY cr.created_at DESC"
-        " LIMIT " + txn.quote(per_page) +
-        " OFFSET " + txn.quote(offset));
+        " LIMIT " + std::to_string(per_page) +
+        " OFFSET " + std::to_string(offset));
     txn.commit();
 
     Paginated<ChangeRequest> result;
@@ -873,15 +921,15 @@ Paginated<ChangeRequest> Database::get_change_requests(
         ChangeRequest cr;
         cr.id = r[0].as<int>();
         cr.requirement_id = r[1].as<int>();
-        cr.status = r[2].as<std::string>();
+        cr.status = safe_str(r, 2);
         cr.justification = safe_str(r, 3);
         cr.changes_description = safe_str(r, 4);
         cr.created_at = safe_str(r, 5);
         cr.resolved_at = safe_str(r, 6);
         cr.resolution_comment = safe_str(r, 7);
-        cr.requirement_system_id = r[8].as<std::string>();
-        cr.requester_username = r[9].as<std::string>();
-        cr.assignee_username = r[10].as<std::string>();
+        cr.requirement_system_id = safe_str(r, 8);
+        cr.requester_username = safe_str(r, 9);
+        cr.assignee_username = safe_str(r, 10);
         cr.requested_by = safe_int(r, 11);
         cr.assigned_to = safe_int(r, 12);
         result.items.push_back(cr);
@@ -910,19 +958,19 @@ std::optional<ChangeRequest> Database::find_change_request_by_id(
         "WHERE cr.id=$1", id);
     txn.commit();
     if (rows.empty()) return std::nullopt;
-    auto& r = rows[0];
+    const auto& r = rows[0];
     ChangeRequest cr;
     cr.id = r[0].as<int>();
     cr.requirement_id = r[1].as<int>();
-    cr.status = r[2].as<std::string>();
+    cr.status = safe_str(r, 2);
     cr.justification = safe_str(r, 3);
     cr.changes_description = safe_str(r, 4);
     cr.created_at = safe_str(r, 5);
     cr.resolved_at = safe_str(r, 6);
     cr.resolution_comment = safe_str(r, 7);
-    cr.requirement_system_id = r[8].as<std::string>();
-    cr.requester_username = r[9].as<std::string>();
-    cr.assignee_username = r[10].as<std::string>();
+    cr.requirement_system_id = safe_str(r, 8);
+    cr.requester_username = safe_str(r, 9);
+    cr.assignee_username = safe_str(r, 10);
     cr.requested_by = safe_int(r, 11);
     cr.assigned_to = safe_int(r, 12);
     return cr;
@@ -952,7 +1000,7 @@ void Database::create_notification(int user_id,
     txn.exec_params(
         "INSERT INTO notifications"
         "(user_id,event_type,message,related_object_type,"
-        "related_object_id) VALUES($1,$2,$3,$4,$5)",
+        "related_object_id,created_at) VALUES($1,$2,$3,$4,$5,NOW())",
         user_id, event_type, message, obj_type, obj_id);
     txn.commit();
 }
@@ -963,7 +1011,7 @@ Paginated<Notification> Database::get_notifications(int user_id,
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     pqxx::work txn(*conn_);
 
-    std::string where = "WHERE user_id=" + txn.quote(user_id);
+    std::string where = "WHERE user_id=" + std::to_string(user_id);
     if (unread_only) where += " AND is_read=false";
 
     auto cnt = txn.exec(
@@ -976,8 +1024,8 @@ Paginated<Notification> Database::get_notifications(int user_id,
         "related_object_type,related_object_id,created_at::text "
         "FROM notifications " + where +
         " ORDER BY created_at DESC"
-        " LIMIT " + txn.quote(per_page) +
-        " OFFSET " + txn.quote(offset));
+        " LIMIT " + std::to_string(per_page) +
+        " OFFSET " + std::to_string(offset));
     txn.commit();
 
     Paginated<Notification> result;
@@ -992,12 +1040,12 @@ Paginated<Notification> Database::get_notifications(int user_id,
         Notification n;
         n.id = r[0].as<int>();
         n.user_id = r[1].as<int>();
-        n.event_type = r[2].as<std::string>();
-        n.message = r[3].as<std::string>();
-        n.is_read = r[4].as<bool>();
+        n.event_type = safe_str(r, 2);
+        n.message = safe_str(r, 3);
+        n.is_read = r[4].is_null() ? false : r[4].as<bool>();
         n.related_object_type = safe_str(r, 5);
         n.related_object_id = safe_int(r, 6);
-        n.created_at = r[7].as<std::string>();
+        n.created_at = safe_str(r, 7);
         result.items.push_back(n);
     }
     return result;
@@ -1037,8 +1085,8 @@ void Database::create_audit_log(int user_id,
     txn.exec_params(
         "INSERT INTO audit_log"
         "(user_id,action,object_type,object_id,old_value,"
-        "new_value,context,ip_address) "
-        "VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+        "new_value,context,ip_address,created_at) "
+        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW())",
         user_id, action, obj_type, obj_id,
         old_val.empty() ? std::optional<std::string>{} : old_val,
         new_val.empty() ? std::optional<std::string>{} : new_val,
@@ -1058,7 +1106,7 @@ Paginated<AuditLog> Database::get_audit_logs(int page, int per_page,
         where += " AND al.object_type=" + txn.quote(obj_type);
     }
     if (user_id > 0) {
-        where += " AND al.user_id=" + txn.quote(user_id);
+        where += " AND al.user_id=" + std::to_string(user_id);
     }
 
     auto cnt = txn.exec(
@@ -1076,8 +1124,8 @@ Paginated<AuditLog> Database::get_audit_logs(int page, int per_page,
         "LEFT JOIN users u ON u.id=al.user_id "
         + where +
         " ORDER BY al.created_at DESC"
-        " LIMIT " + txn.quote(per_page) +
-        " OFFSET " + txn.quote(offset));
+        " LIMIT " + std::to_string(per_page) +
+        " OFFSET " + std::to_string(offset));
     txn.commit();
 
     Paginated<AuditLog> result;
@@ -1092,15 +1140,15 @@ Paginated<AuditLog> Database::get_audit_logs(int page, int per_page,
         AuditLog log;
         log.id = r[0].as<int>();
         log.user_id = safe_int(r, 1);
-        log.username = r[2].as<std::string>();
-        log.action = r[3].as<std::string>();
-        log.object_type = r[4].as<std::string>();
+        log.username = safe_str(r, 2);
+        log.action = safe_str(r, 3);
+        log.object_type = safe_str(r, 4);
         log.object_id = safe_str(r, 5);
         log.old_value = safe_str(r, 6);
         log.new_value = safe_str(r, 7);
         log.context = safe_str(r, 8);
         log.ip_address = safe_str(r, 9);
-        log.created_at = r[10].as<std::string>();
+        log.created_at = safe_str(r, 10);
         result.items.push_back(log);
     }
     return result;
